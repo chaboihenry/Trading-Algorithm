@@ -47,6 +47,9 @@ logs/
 *.joblib
 !strategies/models/.gitkeep
 
+# Ignore massive historical tick dataset
+tick data storage/
+
 # Results & Reports
 backtesting/results/*.md
 backtesting/results/*.json
