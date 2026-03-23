@@ -104,4 +104,4 @@ if __name__ == "__main__":
     test_path = '/app/data/tick data storage/V/parquet/ticks.parquet'
     dib_df = construct_dibs(test_path, threshold=50_000_000)
     print("\n=== PRISTINE DOLLAR IMBALANCE BARS (XGBOOST FEATURES) ===")
-    print(dib_df.tail(10))
+    print(dib_df.head(10))
