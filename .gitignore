@@ -65,3 +65,6 @@ credentials.json
 *.tmp
 *.bak
 temp/
+
+# Ignore Jupyter Notebook checkpoints
+.ipynb_checkpoints/
