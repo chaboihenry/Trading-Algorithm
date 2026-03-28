@@ -8,6 +8,7 @@ from alpaca.trading.requests import MarketOrderRequest
 from alpaca.trading.enums import OrderSide, TimeInForce
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockLatestQuoteRequest
+import math
 
 class Alpacarouter:
     def __init__(self, paper: bool = True):
@@ -31,33 +32,41 @@ class Alpacarouter:
         # use midpoint of spread for sizing
         return (quote.ask_price + quote.bid_price) / 2.0
     
-    def calculate_log_quantities(self, spread_allocation: float, weights: dict, target_position: int):
+    def calculate_leg_quantities(self, spread_allocation: float, weights: dict, target_position: int):
         # translates spread's dollar allocation into exact fractional share quantities
         # target_position: 1 (long the spread), -1 (short the spread)
         total_abs_weight = sum(abs(w) for w in weights.values())
-
+        
         orders = {}
         for ticker, weight in weights.items():
-            # how many dollars go to this specific leg? 
             leg_dollar_allocation = (abs(weight) / total_abs_weight) * spread_allocation
-
-            # fetch live price & convert to fractional shares (Alpaca supports up to 9 dec places)
             live_price = self.get_live_price(ticker)
-            qty = round(leg_dollar_allocation / live_price, 4)
-
-            # determine the side (buy or sell)
-            # If target is 1 (Long Spread) and Johansen weight is positive -> Buy
-            # If target is 1 (Long Spread) and Johansen weight is negative -> Sell Short
-            # This flips if target_position is -1
+            
+            raw_qty = leg_dollar_allocation / live_price
+            
             directional_weight = weight * target_position
             side = OrderSide.BUY if directional_weight > 0 else OrderSide.SELL
-
+            
+            # enforce the physical limits of short selling
+            if side == OrderSide.SELL:
+                # cannot borrow a fraction of a share. Must be a whole integer.
+                qty = math.floor(raw_qty)
+                
+                # THE KILL SWITCH: If you can't afford 1 whole share, kill the spread
+                if qty == 0:
+                    print(f"\n[WARNING] Insufficient allocated capital to short 1 whole share of {ticker} (Price: ${live_price:.2f}).")
+                    print("[WARNING] Aborting entire spread to prevent an unhedged directional trap.")
+                    return {} # Returning an empty dict ensures NO orders are routed
+            else:
+                # long orders can remain fractional
+                qty = round(raw_qty, 4)
+            
             orders[ticker] = {
-                'qty': qty, 
-                'side': side, 
-                'notional_value': leg_dollar_allocation
+                'qty': qty,
+                'side': side,
+                'notional_value': leg_dollar_allocation # Note: theoretical notional, not actual executed
             }
-
+            
         return orders
     
     def execute_spread(self, spread_name: str, orders: dict):
@@ -68,7 +77,7 @@ class Alpacarouter:
                 print(f"Skipping {ticker} - Quantity too small: {details['qty']}")
                 continue
 
-            print(f"Submitting: {details['details'].name} {details['qty']} shares of {ticker} (~${details['notional_value']:.2f})")
+            print(f"Submitting: {details['side'].name} {details['qty']} shares of {ticker} (~${details['notional_value']:.2f})")
 
             req = MarketOrderRequest(
                 symbol=ticker,
@@ -92,5 +101,28 @@ class Alpacarouter:
 
 
 if __name__ == "__main__":
+    print("=== Testing Alpaca Execution Router ===")
+
+    # instantiate in paper trading mode to protect real capital
+    router = Alpacarouter(paper=True)
+
+    # mocking data from 'the_filer' and 'the_allocator'
+    mock_spread_allocation = 4.65        # The HRP budget for this spread
+    mock_johansen_weights = {'V': 1.0, 'MA': -0.5412}
+    mock_target_position = 1             # +1 means Long the spread (Buy V, Short MA)
+
+    print(f"\nIncoming Spread Allocation: ${mock_spread_allocation:.2f}")
+
+    # 1. Translate dollars to shares 
+    leg_orders = router.calculate_leg_quantities(
+        spread_allocation=mock_spread_allocation,
+        weights=mock_johansen_weights,
+        target_position=mock_target_position
+    )
+
+    # 2. Execute the trades
+    router.execute_spread('V_MA_Spread', leg_orders)
     
+    for ticker, details in leg_orders.items():
+        print(f"Calculated Leg -> {ticker}: {details['side'].name} {details['qty']} shares")
 
