@@ -1,10 +1,12 @@
+# adapated from github.com/chaboihenry/Market-Regime-Detection-System
+
 import os
 import numpy as np
 import pandas as pd
 import yfinance as yf
 
 def fetch_macro_data(tickers: list, start_date: str, end_date: str, output_path: str) -> pd.DataFrame:
-    # pepe: download the raw macroeconomic indicators
+    # download the raw macroeconomic indicators
     data = yf.download(tickers, start=start_date, end=end_date)['Close']
     data = data.ffill().dropna()
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -19,7 +21,7 @@ class RegimeCUSUM:
     def __init__(self, threshold_multi: float = 10.0):
         self.threshold_multi = threshold_multi
         self.breaks = []
-        self.current_regime = "NORMAL" # Defaults to normal until a break is detected
+        self.current_regime = "NORMAL" # defaults to normal until a break is detected
 
     def fit_predict(self, series: pd.Series) -> pd.Series:
         diffs = series.diff().dropna()
@@ -34,14 +36,14 @@ class RegimeCUSUM:
             s_pos = max(0, s_pos + diff_val)
             s_neg = min(0, s_neg + diff_val)
             
-            # pepe: VIX spikes upward (Macro Crash / Contagion)
+            # VIX spikes upward (Macro Crash / Contagion)
             if s_pos > h:
                 s_pos, s_neg = 0.0, 0.0
                 events.iloc[i] = 1
                 self.breaks.append((series.index[i], 'CRASH_REGIME'))
                 self.current_regime = "CRASH_REGIME"
                 
-            # pepe: VIX drops downward (Volatility Suppression / Safe to Trade)
+            # VIX drops downward (Volatility Suppression / Safe to Trade)
             elif s_neg < -h:
                 s_pos, s_neg = 0.0, 0.0
                 events.iloc[i] = -1
@@ -56,7 +58,7 @@ def check_macro_safety() -> bool:
     Returns True if the market is safe to trade, False if the portfolio should be liquidated.
     """
     raw_path = '/app/data/raw_macro_data.csv'
-    # In live execution, we only need a short lookback window to check the current state
+    # In live execution, only need a short lookback window to check the current state
     df_raw = fetch_macro_data(['^VIX'], start_date="2024-01-01", end_date=pd.Timestamp.today().strftime('%Y-%m-%d'), output_path=raw_path)
     
     # 1. Stationary Transformation (d=0.0)
@@ -70,10 +72,11 @@ def check_macro_safety() -> bool:
     is_safe = shield.current_regime == "NORMAL"
     return is_safe
 
+
 if __name__ == "__main__":
     print("\n=== SYSTEM CHECK: THE SHIELD ===")
     
-    # Run the historical diagnostic
+    # run the historical diagnostic
     shield_test = RegimeCUSUM(threshold_multi=10.0)
     df = fetch_macro_data(['^VIX'], "2012-01-01", "2026-03-26", '/app/data/raw_macro_data.csv')
     shield_test.fit_predict(np.log(df['^VIX']))

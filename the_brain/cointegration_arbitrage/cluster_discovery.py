@@ -102,5 +102,6 @@ def discover_clusters(ticker_list):
             print(f"  {ticker}: {weight:.4f}")
     print("===============================================\n")
 
+
 if __name__ == "__main__":
     discover_clusters(tickers)

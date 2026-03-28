@@ -69,6 +69,7 @@ def find_min_d(series: pd.Series, min_d: float = 0.2):
             
     return out
 
+
 if __name__ == "__main__":
     test_path = 'data/tick data storage/V/parquet/ticks.parquet'
     print("==== PIPELINE INITIATED ====")

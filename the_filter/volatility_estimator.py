@@ -17,6 +17,7 @@ def get_daily_volatility(close_series: pd.Series, span0: int = 100):
 
     return ewma_vol.dropna()
 
+
 if __name__ == "__main__":
     from the_filter.dib_constructor import construct_dibs
     test_path = '/app/data/tick data storage/V/parquet/ticks.parquet'

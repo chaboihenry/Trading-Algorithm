@@ -79,6 +79,7 @@ def generate_signals(portfolio_data: PrisitineBasket):
     
     return aligned_data
 
+
 if __name__ == "__main__":
     signal_df = generate_signals(sample_basket)
     print("\n===== RECENT SIGNALS ====")

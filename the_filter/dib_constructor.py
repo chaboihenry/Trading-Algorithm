@@ -98,6 +98,7 @@ def construct_dibs(parquet_path: str, threshold: float = 50_000_000):
     print("7. Transferring pristine execution bars to CPU...")
     return dibs_gpu.to_arrow().to_pandas()
 
+
 if __name__ == "__main__":
     # test on Visa. set the imbalance threshold to $50 Million
     # a bar will only print when buyers outpace sellers (or vice versa) by $50M.

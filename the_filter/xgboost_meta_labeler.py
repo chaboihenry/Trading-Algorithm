@@ -134,6 +134,7 @@ def calculate_kelly_size(prob: float, payoff_ratio: float = 2.0):
     kelly_fraction = prob - ((1 - prob) / payoff_ratio)
     return max(0.0, kelly_fraction / 2.0)
 
+
 if __name__ == "__main__":
     print("\n=== INITIALIZING SECURE ENVIRONMENT ===")
     load_dotenv()

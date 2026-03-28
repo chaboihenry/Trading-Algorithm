@@ -84,6 +84,7 @@ def test_johansen_cointegration(paths: list):
         print("\nNo cointegration found in this basket.")
         return False, None, None
 
+
 if __name__ == "__main__":
     # test the upgraded engine on the baseline pair
     local_goog = '/app/data/tick data storage/GOOG/parquet/ticks.parquet'

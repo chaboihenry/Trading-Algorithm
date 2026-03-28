@@ -113,6 +113,7 @@ def get_bins(events: pd.DataFrame, close: pd.Series):
 
     return out
 
+
 if __name__ == "__main__":
     test_path = '/app/data/tick data storage/V/parquet/ticks.parquet'
     
