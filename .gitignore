@@ -46,6 +46,7 @@ logs/
 *.pkl
 *.joblib
 !strategies/models/.gitkeep
+data/
 
 # Ignore massive historical tick dataset
 tick data storage/
