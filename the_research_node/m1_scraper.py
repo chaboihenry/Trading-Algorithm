@@ -1,5 +1,7 @@
 import os
 import time
+import json
+import threading
 import pandas as pd
 from datetime import datetime
 import pyarrow as pa
@@ -13,14 +15,35 @@ load_dotenv()
 API_KEY = os.getenv("ALPACA_API_KEY")
 SECRET_KEY = os.getenv("ALPACA_SECRET_KEY")
 
-# Global RAM buffer
+# Global RAM buffer and paths
 tick_buffer = {}
+UNIVERSE_PATH = "the_models/curated_universe.json"
+last_modified = 0.0
 
-def load_universe():
-    with open('universe.txt', 'r') as f:
-        return [line.strip() for line in f if line.strip()]
+def load_curated_universe(limit=30):
+    # Load and validate the universe file
+    if not os.path.exists(UNIVERSE_PATH):
+        print(f"[WARNING] {UNIVERSE_PATH} missing.")
+        return []
 
-def flush_to_parquet(ticker: str):
+    with open(UNIVERSE_PATH, 'r') as f:
+        data = json.load(f)
+    
+    # Handle both list and dict formats
+    universe = data.get("symbols", []) if isinstance(data, dict) else data
+    
+    if not isinstance(universe, list):
+        print("[ERROR] JSON format invalid.")
+        return []
+        
+    return universe[:limit]
+
+def get_file_timestamp(filepath):
+    # Check last modified time
+    return os.path.getmtime(filepath) if os.path.exists(filepath) else 0.0
+
+def flush_to_parquet(ticker):
+    # Save buffered ticks to ZSTD compressed parquet
     if ticker not in tick_buffer or not tick_buffer[ticker]: 
         return
 
@@ -28,17 +51,16 @@ def flush_to_parquet(ticker: str):
     os.makedirs(base_path, exist_ok=True)
 
     df = pd.DataFrame(tick_buffer[ticker])
-    filename = f"{datetime.now().strftime('%Y%m%d%H%M%S%f')}.parquet"
-    file_path = os.path.join(base_path, filename)
+    file_path = os.path.join(base_path, f"{datetime.now().strftime('%Y%m%d%H%M%S%f')}.parquet")
 
-    # High compression ZSTD for the 2TB SSD
     table = pa.Table.from_pandas(df)
     pq.write_table(table, file_path, compression='zstd')
 
     tick_buffer[ticker] = []
-    print(f"[Scraper] Flushed {len(df)} ticks for {ticker} to SSD.")
+    print(f"[Scraper] Flushed {len(df)} ticks for {ticker}.")
 
 async def handle_trade(trade):
+    # Process incoming trades and append to buffer
     ticker = trade.symbol
     if ticker not in tick_buffer:
         tick_buffer[ticker] = []
@@ -50,46 +72,64 @@ async def handle_trade(trade):
         'exchange': trade.exchange
     })
 
-    # High-volume threshold (Change 10000 back to 10 for small tests)
+    # Flush once buffer hits 10k ticks
     if len(tick_buffer[ticker]) >= 10000:
         flush_to_parquet(ticker)
 
+def universe_watcher(stream_instance):
+    # Background thread to monitor file changes and kill stream
+    global last_modified
+    while True:
+        time.sleep(10) # Poll every 10 seconds
+        current_ts = get_file_timestamp(UNIVERSE_PATH)
+        
+        if current_ts > last_modified:
+            print("\n[UPDATE] Change detected in curated_universe.json.")
+            last_modified = current_ts
+            # Calling stop() allows the main loop to progress
+            stream_instance.stop()
+            break 
+
 if __name__ == "__main__":
-    print("====== Initializing M1 Robust Async Scraper ======")
+    print("====== Initializing M1 Hot-Reload Scraper ======")
     
-    # Connection parameters
-    retry_delay = 5  # Start with 5 seconds
-    max_retry = 60   # Max wait of 1 minute
+    retry_delay = 5
+    last_modified = get_file_timestamp(UNIVERSE_PATH)
 
     while True:
         try:
-            # 1. Reload universe in case you added stocks while it was down
-            UNIVERSE = load_universe()
-            for t in UNIVERSE:
-                if t not in tick_buffer: tick_buffer[t] = []
+            # 1. Load the symbols
+            UNIVERSE = load_curated_universe(limit=30)
+            if not UNIVERSE:
+                time.sleep(30)
+                continue
 
-            # 2. Initialize fresh stream
+            # 2. Prep buffers
+            for t in UNIVERSE:
+                if t not in tick_buffer: 
+                    tick_buffer[t] = []
+
+            # 3. Setup Stream
             stream = StockDataStream(API_KEY, SECRET_KEY, feed=DataFeed.IEX)
-            
-            # 3. Subscribe and Run
             stream.subscribe_trades(handle_trade, *UNIVERSE)
-            print(f"Connected. Monitoring {len(UNIVERSE)} assets...")
             
-            # Reset retry delay on successful connection
+            # 4. Launch file watcher thread
+            watcher = threading.Thread(target=universe_watcher, args=(stream,), daemon=True)
+            watcher.start()
+
+            print(f"Connected. Monitoring {len(UNIVERSE)} curated assets...")
             retry_delay = 5
+            
+            # 5. Execute blocking stream
             stream.run()
 
         except KeyboardInterrupt:
-            print("\n[SHUTDOWN] Manual override. Flushing remaining data...")
-            for ticker in tick_buffer.keys():
+            print("\n[SHUTDOWN] Manual override. Flushing data...")
+            for ticker in list(tick_buffer.keys()):
                 flush_to_parquet(ticker)
-            print("Safe shutdown complete.")
             break
-        
-        except Exception as e:
-            print(f"[CONNECTION ERROR] {e}")
-            print(f"Attempting reconnection in {retry_delay} seconds...")
-            time.sleep(retry_delay)
             
-            # Exponential backoff so we don't spam Alpaca and get banned
-            retry_delay = min(retry_delay * 2, max_retry)
+        except Exception as e:
+            print(f"\n[STREAM ERROR] {e}")
+            time.sleep(retry_delay)
+            retry_delay = min(retry_delay * 2, 60)

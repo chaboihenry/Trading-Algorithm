@@ -24,7 +24,7 @@ def load_universe():
         return [line.strip() for line in f if line.strip()]
 
 def get_vault_bounds(ticker: str):
-    """Finds the date boundaries and automatically deletes corrupted files."""
+    # Finds the date boundaries and automatically deletes corrupted files
     path = f"/Volumes/Vault/quant_data/tick data storage/{ticker}/parquet"
     if not os.path.exists(path) or not os.listdir(path):
         return None
