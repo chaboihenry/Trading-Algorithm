@@ -46,10 +46,6 @@ logs/
 *.pkl
 *.joblib
 !strategies/models/.gitkeep
-data/
-
-# Ignore massive historical tick dataset
-tick data storage/
 
 # Results & Reports
 backtesting/results/*.md
