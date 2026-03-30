@@ -17,7 +17,7 @@ def get_ivp(cov, **kargs):
     return ivp
 
 def get_cluster_var(cov, c_items):
-    cov_ = cov.iloc[c_items, c_items] 
+    cov_ = cov.loc[c_items, c_items] 
     w_ = get_ivp(cov_).reshape(-1, 1)
     c_var = np.dot(np.dot(w_.T, cov_), w_)[0, 0]
     return c_var

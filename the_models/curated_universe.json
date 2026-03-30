@@ -1,5 +1,5 @@
 {
-    "timestamp": "2026-03-30T01:54:05.619366+00:00",
+    "timestamp": "2026-03-30T02:07:58.518731+00:00",
     "baskets": {
         "ABBV_AMGN_GILD_LLY_XLV_Spread": {
             "tickers": [
@@ -16,7 +16,8 @@
                 "LLY": -3.3167595885295413,
                 "XLV": 41.0032365355768
             },
-            "half_life": 1.2078270031298435
+            "half_life": 1.2078270031298435,
+            "capital_allocation": 0.232
         },
         "AVGO_NVDA_Spread": {
             "tickers": [
@@ -27,7 +28,8 @@
                 "AVGO": 1.0,
                 "NVDA": -1.349453859481298
             },
-            "half_life": 7.327860849699223
+            "half_life": 7.327860849699223,
+            "capital_allocation": 0.0
         },
         "BAC_JPM_Spread": {
             "tickers": [
@@ -38,7 +40,8 @@
                 "BAC": 1.0,
                 "JPM": -0.2319455590472712
             },
-            "half_life": 5.02266092958637
+            "half_life": 5.02266092958637,
+            "capital_allocation": 0.0242
         },
         "CVX_XLE_Spread": {
             "tickers": [
@@ -49,7 +52,8 @@
                 "CVX": 1.0,
                 "XLE": -3.144906093170658
             },
-            "half_life": 0.06011556690195293
+            "half_life": 0.06011556690195293,
+            "capital_allocation": 0.0287
         },
         "DUK_SO_Spread": {
             "tickers": [
@@ -60,7 +64,8 @@
                 "DUK": 1.0,
                 "SO": -1.433240690972093
             },
-            "half_life": 0.2641291673613644
+            "half_life": 0.2641291673613644,
+            "capital_allocation": 0.0049
         },
         "EOG_XOM_Spread": {
             "tickers": [
@@ -71,7 +76,8 @@
                 "EOG": 1.0,
                 "XOM": -0.8468714950789907
             },
-            "half_life": 0.22730838108794296
+            "half_life": 0.22730838108794296,
+            "capital_allocation": 0.0004
         },
         "GOOG_GOOGL_Spread": {
             "tickers": [
@@ -82,7 +88,8 @@
                 "GOOG": 1.0,
                 "GOOGL": -1.0354379085901804
             },
-            "half_life": 0.16493916668289088
+            "half_life": 0.16493916668289088,
+            "capital_allocation": 0.0016
         },
         "GS_MS_Spread": {
             "tickers": [
@@ -93,7 +100,8 @@
                 "GS": 1.0,
                 "MS": -5.480973621791682
             },
-            "half_life": 0.9589326543941936
+            "half_life": 0.9589326543941936,
+            "capital_allocation": 0.0113
         },
         "HD_LOW_Spread": {
             "tickers": [
@@ -104,7 +112,8 @@
                 "HD": 1.0,
                 "LOW": -1.156387690170625
             },
-            "half_life": 3.2159266197824397
+            "half_life": 3.2159266197824397,
+            "capital_allocation": 0.0905
         },
         "HYG_RTX_TLT_XLU_Spread": {
             "tickers": [
@@ -119,7 +128,8 @@
                 "TLT": -0.5542488174311149,
                 "XLU": 0.48202348315441673
             },
-            "half_life": 0.045964273219034214
+            "half_life": 0.045964273219034214,
+            "capital_allocation": 0.4285
         },
         "KO_VZ_Spread": {
             "tickers": [
@@ -130,7 +140,8 @@
                 "KO": 1.0,
                 "VZ": -0.9603008522354208
             },
-            "half_life": 1.6234147854912153
+            "half_life": 1.6234147854912153,
+            "capital_allocation": 0.1778
         },
         "MA_V_Spread": {
             "tickers": [
@@ -141,51 +152,39 @@
                 "MA": 1.0,
                 "V": -1.652426456021578
             },
-            "half_life": 1.4080611260478055
-        },
-        "SMH_TSM_Spread": {
-            "tickers": [
-                "SMH",
-                "TSM"
-            ],
-            "weights": {
-                "SMH": 1.0,
-                "TSM": -0.502002951892923
-            },
-            "half_life": 9.195659060065255
+            "half_life": 1.4080611260478055,
+            "capital_allocation": 0.0
         }
     },
     "flat_list": [
-        "LLY",
-        "XLE",
-        "TLT",
-        "EOG",
-        "JPM",
-        "HD",
-        "VZ",
+        "GOOG",
         "BAC",
+        "HD",
+        "NVDA",
+        "LLY",
+        "XLV",
+        "KO",
+        "MA",
+        "GOOGL",
+        "CVX",
+        "SO",
+        "AVGO",
+        "XOM",
+        "EOG",
+        "TLT",
+        "DUK",
+        "V",
+        "HYG",
+        "XLE",
+        "AMGN",
         "RTX",
+        "LOW",
+        "GS",
         "ABBV",
         "MS",
-        "GOOGL",
-        "XLV",
-        "AMGN",
-        "XLU",
-        "MA",
-        "LOW",
-        "TSM",
-        "HYG",
-        "SO",
-        "NVDA",
-        "XOM",
-        "DUK",
-        "GOOG",
-        "V",
         "GILD",
-        "GS",
-        "SMH",
-        "AVGO",
-        "CVX",
-        "KO"
+        "JPM",
+        "VZ",
+        "XLU"
     ]
 }

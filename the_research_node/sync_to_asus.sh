@@ -1,16 +1,8 @@
 #!/bin/bash
+# sync_to_asus.sh
 
-echo "==== Initiating Handoff to Execution Node ==="
-
-# 1. Target the correct 'the_models' directory
-git add the_models/curated_universe.json
-git add the_models/meta_labeler_v1.json
-
-# 2. Commit the new parameters
-TIMESTAMP=$(date +"%Y-%m-%d_%H:%M:%S")
-git commit -m "Automated Model & Universe Update: $TIMESTAMP"
-
-# 3. Push to Github
+echo "Committing updated models to GitHub..."
+git add the_models/
+git commit -m "AUTO: M1 Payload Update (Universe & ML Models)"
 git push origin main
-
-echo "=== Handoff Complete. ASUS Ready to Pull. ==="
+echo "Push successful."

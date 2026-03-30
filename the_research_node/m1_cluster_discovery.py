@@ -37,7 +37,7 @@ def load_vault_data(cluster_tickers: list, lookback_days: int = 90):
         
         # 3. File-by-File iteration bypasses PyArrow's mixed-schema folder crashes entirely
         for file in os.listdir(path):
-            if not file.endswith('.parquet'):
+            if not file.endswith('.parquet') or file.startswith('._'):
                 continue
                 
             # Skip files physically written before our lookback window
@@ -83,7 +83,7 @@ def load_vault_data(cluster_tickers: list, lookback_days: int = 90):
 
 
 def test_cointegration(aligned_data: pd.DataFrame, tickers: list):
-    """Johansen test to find the mean-reverting 'leash'."""
+    # Johansen test to find the mean-reverting 'leash'.
     if len(aligned_data) < 156: # Minimum 2 days of 5-min bars for valid VAR
         return False, None, None
 
@@ -107,6 +107,31 @@ def test_cointegration(aligned_data: pd.DataFrame, tickers: list):
        
     return False, None, None
 
+def enforce_websocket_limit(baskets: dict, max_tickers: int = 30):
+    """
+    Recursively drops the lowest-conviction baskets until the total unique
+    ticker count across all remaining strategies is <= max_tickers.
+    Protects the Alpaca IEX Free Tier websocket connection.
+    """
+    while True:
+        unique_tickers = set()
+        for data in baskets.values():
+            unique_tickers.update(data['tickers'])
+            
+        if len(unique_tickers) <= max_tickers:
+            break
+            
+        if not baskets:
+            break
+            
+        # Assuming the baskets dictionary appends newer/weaker clusters last
+        # pop the last strategy off the list to free up connection slots
+        weakest_strategy = list(baskets.keys())[-1]
+        print(f"  >> [WEBSOCKET LIMIT] {len(unique_tickers)} tickers found. Dropping {weakest_strategy}...")
+        baskets.pop(weakest_strategy)
+        
+    return baskets
+
 def run_discovery_pipeline():
     universe = load_universe_list()
     if not universe: return
@@ -124,7 +149,6 @@ def run_discovery_pipeline():
     groups = results[results['Cluster'] != -1].groupby('Cluster')['Ticker'].apply(list)
    
     confirmed_baskets = {}
-    approved_tickers = set()
 
     for _, cluster_tickers in groups.items():
         aligned = load_vault_data(cluster_tickers)
@@ -141,7 +165,14 @@ def run_discovery_pipeline():
                 'weights': weights,
                 'half_life': hl_days
             }
-            approved_tickers.update(cluster_tickers)
+            
+    # ENFORCE ALPACA WEBSOCKET LIMIT BEFORE SAVING
+    confirmed_baskets = enforce_websocket_limit(confirmed_baskets, max_tickers=30)
+    
+    # Re-calculate approved tickers after enforcing the limit
+    approved_tickers = set()
+    for data in confirmed_baskets.values():
+        approved_tickers.update(data['tickers'])
            
     if approved_tickers:
         payload = {
@@ -158,7 +189,7 @@ def run_discovery_pipeline():
         temp_path = os.path.join(target_dir, 'curated_universe_temp.json')
         
         # Write the heavy payload to the temporary file
-        # This keeps the final file untouched during the I/O process
+        # keeps the final file untouched during the I/O process
         with open(temp_path, 'w') as f:
             json.dump(payload, f, indent=4)
             
@@ -167,9 +198,6 @@ def run_discovery_pipeline():
         os.replace(temp_path, final_path)
             
         print(f"[SUCCESS] Curated {len(approved_tickers)} tickers for Live Execution.")
-
-if __name__ == "__main__":
-    run_discovery_pipeline()
 
 if __name__ == "__main__":
     run_discovery_pipeline()
