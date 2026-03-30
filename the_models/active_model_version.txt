@@ -1,1 +1,1 @@
-meta_labeler_v1.json
+meta_labeler_v2.json

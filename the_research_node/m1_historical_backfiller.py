@@ -19,52 +19,56 @@ if not API_KEY or not SECRET_KEY:
 # initialize the historical client
 client = StockHistoricalDataClient(API_KEY, SECRET_KEY)
 
+# Define the exact same strict schema as the scraper to prevent ArrowInvalid crashes
+STRICT_SCHEMA = pa.schema([
+    ('timestamp', pa.timestamp('ns', tz='UTC')),
+    ('price', pa.float64()),
+    ('size', pa.float64()),
+    ('exchange', pa.string())
+])
+
 def load_universe():
     with open('universe.txt', 'r') as f:
         return [line.strip() for line in f if line.strip()]
 
 def get_vault_bounds(ticker: str):
-    # Finds the date boundaries and automatically deletes corrupted files
+    # Finds the true mathematical boundaries of the data, immune to sorting errors
     path = f"/Volumes/Vault/quant_data/tick data storage/{ticker}/parquet"
     if not os.path.exists(path) or not os.listdir(path):
         return None
     
-    files = sorted([f for f in os.listdir(path) if f.endswith('.parquet')])
+    # 1. Filter out Apple '._' ghost files natively so the Janitor ignores them
+    files = [f for f in os.listdir(path) if f.endswith('.parquet') and not f.startswith('._')]
     if not files: 
         return None
 
-    start_date = None
-    end_date = None
+    global_start = None
+    global_end = None
 
-    # 1. Scan forward to find the true Start Date
+    # 2. Scan ALL valid files to find the true min and max dates
+    # This bypasses the alphabetical sorting bug between "HIST_" and "2026..."
     for f in files:
         file_path = os.path.join(path, f)
         try:
+            # Reading ONLY the timestamp column is highly optimized in PyArrow
             df = pd.read_parquet(file_path, columns=['timestamp'])
-            start_date = df['timestamp'].min().replace(tzinfo=None)
-            break  # Found the first valid file, stop looking
-        except Exception:
-            print(f"  >> [JANITOR] Deleting corrupted file: {f}")
+            if df.empty: continue
+            
+            file_min = df['timestamp'].min().replace(tzinfo=None)
+            file_max = df['timestamp'].max().replace(tzinfo=None)
+            
+            if global_start is None or file_min < global_start:
+                global_start = file_min
+            if global_end is None or file_max > global_end:
+                global_end = file_max
+                
+        except Exception as e:
+            # If PyArrow actually crashes on a real file, delete it
+            print(f"  >> [JANITOR] Removing corrupted file: {f}")
             os.remove(file_path)
 
-    # Refresh the file list in case the janitor deleted files
-    files = sorted([f for f in os.listdir(path) if f.endswith('.parquet')])
-    if not files or not start_date: 
-        return None
-
-    # 2. Scan backward to find the true End Date
-    for f in reversed(files):
-        file_path = os.path.join(path, f)
-        try:
-            df = pd.read_parquet(file_path, columns=['timestamp'])
-            end_date = df['timestamp'].max().replace(tzinfo=None)
-            break  # Found the last valid file, stop looking
-        except Exception:
-            print(f"  >> [JANITOR] Deleting corrupted file: {f}")
-            os.remove(file_path)
-
-    if start_date and end_date:
-        return start_date, end_date
+    if global_start and global_end:
+        return global_start, global_end
     return None
 
 def backfill_ticker(ticker: str, target_start: datetime):
@@ -114,12 +118,19 @@ def backfill_ticker(ticker: str, target_start: datetime):
                 if trades and not trades.df.empty:
                     df = trades.df.reset_index().rename(columns={'symbol': 'ticker'})
                     
+                    # Standardize timestamp and explicitly cast columns to match STRICT_SCHEMA
+                    df['timestamp'] = pd.to_datetime(df['timestamp'], utc=True)
+                    df['price'] = df['price'].astype(float)
+                    df['size'] = df['size'].astype(float)
+                    df['exchange'] = df['exchange'].astype(str)
+                    
                     base_path = f"/Volumes/Vault/quant_data/tick data storage/{ticker}/parquet"
                     os.makedirs(base_path, exist_ok=True)
                     filename = f"HIST_{current_start.strftime('%Y%m%d')}_{current_end.strftime('%Y%m%d')}.parquet"
                     file_path = os.path.join(base_path, filename)
                     
-                    table = pa.Table.from_pandas(df[['timestamp', 'price', 'size', 'exchange']])
+                    # Apply the STRICT_SCHEMA here to prevent ArrowInvalid schema unification crashes
+                    table = pa.Table.from_pandas(df[['timestamp', 'price', 'size', 'exchange']], schema=STRICT_SCHEMA)
                     pq.write_table(table, file_path, compression='zstd')
                     print(f"  >> [SUCCESS] Flushed chunk to Vault.")
                 else:

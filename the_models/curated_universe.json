@@ -1,3 +1,191 @@
-[
-    "V", "MA", "AAPL", "MSFT", "NVDA", "AMD", "JPM", "BAC"
-]
+{
+    "timestamp": "2026-03-29T18:51:30.246989",
+    "baskets": {
+        "ABBV_AMGN_GILD_LLY_XLV_Spread": {
+            "tickers": [
+                "ABBV",
+                "AMGN",
+                "GILD",
+                "LLY",
+                "XLV"
+            ],
+            "weights": {
+                "ABBV": 1.0,
+                "AMGN": -3.0290930404881533,
+                "GILD": 0.6947751634608099,
+                "LLY": -3.1652034632219195,
+                "XLV": 39.13229396395126
+            },
+            "half_life": 1.2083543413702642
+        },
+        "AVGO_NVDA_Spread": {
+            "tickers": [
+                "AVGO",
+                "NVDA"
+            ],
+            "weights": {
+                "AVGO": 1.0,
+                "NVDA": -1.374764626665345
+            },
+            "half_life": 7.37926594681212
+        },
+        "BAC_JPM_Spread": {
+            "tickers": [
+                "BAC",
+                "JPM"
+            ],
+            "weights": {
+                "BAC": 1.0,
+                "JPM": -0.23130621737983495
+            },
+            "half_life": 5.060857447579498
+        },
+        "CVX_XLE_Spread": {
+            "tickers": [
+                "CVX",
+                "XLE"
+            ],
+            "weights": {
+                "CVX": 1.0,
+                "XLE": -3.1610539790348757
+            },
+            "half_life": 0.061693507252131775
+        },
+        "DUK_SO_Spread": {
+            "tickers": [
+                "DUK",
+                "SO"
+            ],
+            "weights": {
+                "DUK": 1.0,
+                "SO": -1.4340502446235621
+            },
+            "half_life": 0.26398668141847625
+        },
+        "EOG_XOM_Spread": {
+            "tickers": [
+                "EOG",
+                "XOM"
+            ],
+            "weights": {
+                "EOG": 1.0,
+                "XOM": -0.84320138604301
+            },
+            "half_life": 0.2282181981836216
+        },
+        "GOOG_GOOGL_Spread": {
+            "tickers": [
+                "GOOG",
+                "GOOGL"
+            ],
+            "weights": {
+                "GOOG": 1.0,
+                "GOOGL": -1.0353796428641668
+            },
+            "half_life": 0.16616170432233668
+        },
+        "GS_MS_Spread": {
+            "tickers": [
+                "GS",
+                "MS"
+            ],
+            "weights": {
+                "GS": 1.0,
+                "MS": -5.481199093911622
+            },
+            "half_life": 0.9767251075509434
+        },
+        "HD_LOW_Spread": {
+            "tickers": [
+                "HD",
+                "LOW"
+            ],
+            "weights": {
+                "HD": 1.0,
+                "LOW": -1.1546571331286968
+            },
+            "half_life": 3.2190514298437116
+        },
+        "HYG_RTX_TLT_XLU_Spread": {
+            "tickers": [
+                "HYG",
+                "RTX",
+                "TLT",
+                "XLU"
+            ],
+            "weights": {
+                "HYG": 1.0,
+                "RTX": -0.03272944126817777,
+                "TLT": -0.5539247641082431,
+                "XLU": 0.48325125198805036
+            },
+            "half_life": 0.046224461956928864
+        },
+        "KO_VZ_Spread": {
+            "tickers": [
+                "KO",
+                "VZ"
+            ],
+            "weights": {
+                "KO": 1.0,
+                "VZ": -0.9604859971455758
+            },
+            "half_life": 1.6233336652197266
+        },
+        "MA_V_Spread": {
+            "tickers": [
+                "MA",
+                "V"
+            ],
+            "weights": {
+                "MA": 1.0,
+                "V": -1.649338137218119
+            },
+            "half_life": 1.3861210853610795
+        },
+        "SMH_TSM_Spread": {
+            "tickers": [
+                "SMH",
+                "TSM"
+            ],
+            "weights": {
+                "SMH": 1.0,
+                "TSM": -0.5151346720770215
+            },
+            "half_life": 9.228839945292947
+        }
+    },
+    "flat_list": [
+        "XLE",
+        "KO",
+        "MS",
+        "NVDA",
+        "XLU",
+        "V",
+        "GS",
+        "GOOG",
+        "MA",
+        "TLT",
+        "RTX",
+        "SO",
+        "LOW",
+        "TSM",
+        "JPM",
+        "CVX",
+        "HD",
+        "GOOGL",
+        "AMGN",
+        "XLV",
+        "SMH",
+        "AVGO",
+        "GILD",
+        "LLY",
+        "ABBV",
+        "HYG",
+        "DUK",
+        "EOG",
+        "XOM",
+        "VZ",
+        "BAC"
+    ]
+}

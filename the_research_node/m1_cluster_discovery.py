@@ -3,7 +3,7 @@ import json
 import pandas as pd
 import numpy as np
 import yfinance as yf
-import pyarrow.dataset as ds
+from datetime import datetime, timedelta, timezone
 from sklearn.decomposition import PCA
 from sklearn.cluster import DBSCAN
 from sklearn.preprocessing import StandardScaler
@@ -19,43 +19,68 @@ def load_universe_list():
         print("[CRITICAL] universe.txt not found. Create it in the root directory.")
         return []
 
-def load_vault_data(cluster_tickers: list):
-    # reads ZSTD compressed parquet directories from the Vault SSD.
+def load_vault_data(cluster_tickers: list, lookback_days: int = 90):
     cpu_dataframes = []
-   
-    for ticker in cluster_tickers:
+    
+    # 1. Calculate UTC cutoff for exact filtering
+    cutoff_dt = pd.Timestamp.now(tz='UTC') - pd.Timedelta(days=lookback_days)
+    
+    # 2. Extract YYYYMMDD for lightning-fast file exclusion
+    cutoff_str = cutoff_dt.strftime('%Y%m%d')
 
+    for ticker in cluster_tickers:
         path = f"/Volumes/Vault/quant_data/tick data storage/{ticker}/parquet"
-       
         if not os.path.exists(path):
             continue
            
-        try:
-            # ds.dataset seamlessly handles thousands of small compressed files
-            dataset = ds.dataset(path, format="parquet")
-            df = dataset.to_table(columns=['timestamp', 'price']).to_pandas()
-           
-            df['timestamp'] = pd.to_datetime(df['timestamp'])
-            df = df.sort_values('timestamp').set_index('timestamp')
-           
-            # Resample to 5-minute bars (78 bars per trading day)
-            close_cpu = df['price'].resample('5min').last().ffill()
-           
-            df_aligned = close_cpu.reset_index()
-            df_aligned.columns = ['timestamp', ticker]
-            cpu_dataframes.append(df_aligned)
-        except Exception as e:
-            print(f"  >> [ERROR] {ticker}: {e}")
-            return pd.DataFrame()
+        ticker_dfs = []
+        
+        # 3. File-by-File iteration bypasses PyArrow's mixed-schema folder crashes entirely
+        for file in os.listdir(path):
+            if not file.endswith('.parquet'):
+                continue
+                
+            # Skip files physically written before our lookback window
+            if file[:8] < cutoff_str:
+                continue
+                
+            file_path = os.path.join(path, file)
+            try:
+                # Pandas safely handles the schema of each file individually in memory
+                df = pd.read_parquet(
+                    file_path, 
+                    columns=['timestamp', 'price'],
+                    filters=[('timestamp', '>=', cutoff_dt)]
+                )
+                if not df.empty:
+                    ticker_dfs.append(df)
+            except Exception:
+                continue
+        
+        if not ticker_dfs:
+            continue
+            
+        # Concatenate all valid files. Pandas perfectly aligns 'ns' and 'us' without crashing.
+        df = pd.concat(ticker_dfs, ignore_index=True)
+        df['timestamp'] = pd.to_datetime(df['timestamp'], utc=True)
+        df = df.sort_values('timestamp').set_index('timestamp')
+       
+        # Resample to 5-minute bars (78 bars per trading day)
+        close_cpu = df['price'].resample('5min').last().ffill()
+       
+        df_aligned = close_cpu.reset_index()
+        df_aligned.columns = ['timestamp', ticker]
+        cpu_dataframes.append(df_aligned)
 
-    if not cpu_dataframes: return pd.DataFrame()
+    if not cpu_dataframes: 
+        return pd.DataFrame()
 
-    # inner join to ensure only trade when all assets in the basket have data
     aligned_data = cpu_dataframes[0]
     for df in cpu_dataframes[1:]:
         aligned_data = pd.merge(aligned_data, df, on='timestamp', how='inner')
        
     return aligned_data.dropna().set_index('timestamp')
+
 
 def test_cointegration(aligned_data: pd.DataFrame, tickers: list):
     """Johansen test to find the mean-reverting 'leash'."""
@@ -90,7 +115,7 @@ def run_discovery_pipeline():
     data = yf.download(universe, period="1y", interval="1d")['Close'].dropna(axis=1)
     returns_t = data.pct_change().dropna().T
    
-    # Identify economic clusters using PCA + DBSCAN
+    # identify economic clusters using pca and dbscan
     scaled = StandardScaler().fit_transform(returns_t)
     pca = PCA(n_components=min(len(universe), 5)).fit_transform(scaled)
     clusters = DBSCAN(eps=1.2, min_samples=2).fit_predict(pca)
@@ -98,7 +123,7 @@ def run_discovery_pipeline():
     results = pd.DataFrame({'Ticker': returns_t.index, 'Cluster': clusters})
     groups = results[results['Cluster'] != -1].groupby('Cluster')['Ticker'].apply(list)
    
-    confirmed_baskets = []
+    confirmed_baskets = {}
     approved_tickers = set()
 
     for _, cluster_tickers in groups.items():
@@ -108,13 +133,43 @@ def run_discovery_pipeline():
         is_coint, hl_days, weights = test_cointegration(aligned, cluster_tickers)
 
         if is_coint and (0.01 <= hl_days <= 15.0):
-            confirmed_baskets.append({'basket': cluster_tickers, 'weights': weights})
+            # create a unique identifier for the spread
+            spread_name = "_".join(cluster_tickers) + "_Spread"
+            
+            confirmed_baskets[spread_name] = {
+                'tickers': cluster_tickers, 
+                'weights': weights,
+                'half_life': hl_days
+            }
             approved_tickers.update(cluster_tickers)
            
     if approved_tickers:
-        with open('curated_universe.json', 'w') as f:
-            json.dump(list(approved_tickers), f, indent=4)
+        payload = {
+            "timestamp": pd.Timestamp.now(tz='UTC').isoformat(),
+            "baskets": confirmed_baskets,
+            "flat_list": list(approved_tickers)
+        }
+        
+        target_dir = 'the_models'
+        os.makedirs(target_dir, exist_ok=True)
+        
+        # Define paths for the atomic swap
+        final_path = os.path.join(target_dir, 'curated_universe.json')
+        temp_path = os.path.join(target_dir, 'curated_universe_temp.json')
+        
+        # Write the heavy payload to the temporary file
+        # This keeps the final file untouched during the I/O process
+        with open(temp_path, 'w') as f:
+            json.dump(payload, f, indent=4)
+            
+        # Instantly swap the temp file to the final destination
+        # This is an atomic POSIX operation, meaning zero read downtime
+        os.replace(temp_path, final_path)
+            
         print(f"[SUCCESS] Curated {len(approved_tickers)} tickers for Live Execution.")
+
+if __name__ == "__main__":
+    run_discovery_pipeline()
 
 if __name__ == "__main__":
     run_discovery_pipeline()
