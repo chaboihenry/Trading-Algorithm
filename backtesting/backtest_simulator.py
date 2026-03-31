@@ -138,16 +138,16 @@ class VectorizedBacktester:
             if spread_val.eq(0).all():
                 continue
                     
-            # B. THE ENGINE: Calculate Z-Scores
-            window = max(int(half_life * 78), 30) # 78 5-min bars per day
-            rolling_mean = spread_val.rolling(window=window).mean()
-            rolling_std = spread_val.rolling(window=window).std()
+            # B. THE ENGINE: Calculate Z-Scores (UPGRADED TO EWMA)
+            window = max(int(half_life * 78), 30) 
             
-            # Avoid division by zero
+            # EWMA completely eliminates the "Drop-Off Effect" of simple rolling windows
+            rolling_mean = spread_val.ewm(span=window).mean()
+            rolling_std = spread_val.ewm(span=window).std()
+            
             rolling_std = rolling_std.replace(0, np.nan)
             z_score = (spread_val - rolling_mean) / rolling_std
             
-            # Base Signals: Long if Z < -2, Short if Z > 2
             base_signals = pd.Series(0, index=df.index)
             base_signals[z_score < -2.0] = 1
             base_signals[z_score > 2.0] = -1
@@ -177,7 +177,9 @@ class VectorizedBacktester:
                 win_probs = self.meta_labeler.predict(dmatrix)
                 
                 # 3. Filter base signals SAFELY without shrinking the array length
-                meta_mask = pd.Series(win_probs > 0.5, index=valid_idx)
+                # Strict Confidence Thresholding
+                # Force the model to only take trades with 55% conviction or higher
+                meta_mask = pd.Series(win_probs > 0.55, index=valid_idx)
                 
                 # Create a blank full-length series, then map the approved signals into it
                 filtered_signals = pd.Series(0, index=df.index)
@@ -188,64 +190,111 @@ class VectorizedBacktester:
             # D. Apply The Shield (Regime Filter)
             final_signals = base_signals.where(regime_safe_mask, 0)
             
-            # E. Event-Driven Execution (Triple Barrier Method)
+            # E. Event-Driven Execution (Triple Barrier + Bet Sizing + Mean Reversion)
             print(f"  -> Simulating path-dependent trades for {spread_name}...")
             
-            # Recreate the volatility scaling used in your training environment
-            # EWM span=100 on 5-min bars, scaled to approximate the daily volatility targets
             vol = spread_val.pct_change().ewm(span=100).std().fillna(0) * np.sqrt(78) 
             
-            in_position = 0        # 1 for Long, -1 for Short
+            in_position = 0        
             entry_price = 0.0
             entry_idx = 0
             current_vol = 0.0
             
-            # We must iterate row-by-row to respect the exact path of the trade
+            # AFML Bet Sizing: We need to track the model's confidence at entry
+            trade_size_multiplier = 0.0 
+            
+            # Define a 30-day warm-up period to completely bypass early data artifacts
+            # 78 5-min bars per day * 30 days = 2340 bars
+            WARMUP_BARS = 2340 
+            
             for i in range(1, len(df)):
                 current_price = spread_val.iloc[i]
                 prev_price = spread_val.iloc[i-1]
                 signal = final_signals.iloc[i]
+                current_z = z_score.iloc[i]
+                current_time = df.index[i].time()
                 
-                # 1. Look for Entry (if flat)
-                if in_position == 0:
-                    if signal != 0:
+                # 1. Look for Entry (if flat) AND past warm-up
+                if in_position == 0 and i > WARMUP_BARS:
+                    
+                    # Microstructure Time Filter
+                    # Forbid new entries during the chaotic open (9:30-9:45) and close (15:45-16:00)
+                    is_safe_time = (current_time >= pd.Timestamp("09:45").time()) and \
+                                   (current_time <= pd.Timestamp("15:45").time())
+                    
+                    if signal != 0 and is_safe_time:
                         in_position = signal
                         entry_price = current_price
                         entry_idx = i
-                        # Lock in the volatility at the moment of entry to set the barrier widths
-                        current_vol = vol.iloc[i] if vol.iloc[i] > 0 else 0.005 
+                        current_vol = vol.iloc[i] if vol.iloc[i] > 0 else 0.005
+                        
+                        # The Half-Kelly Criterion
+                        if self.meta_labeler is not None:
+                            prob = win_probs[i] if i < len(win_probs) else 0.55
+                            R = 1.5 
+                            kelly_fraction = prob - ((1.0 - prob) / R)
+                            trade_size_multiplier = max(0.0, kelly_fraction / 2.0)
+                        else:
+                            trade_size_multiplier = 0.5 
+                            
+                        # --- REALITY CHECK: ENTRY FRICTION ---
+                        LEVERAGE_SCALAR = 4.0
+                        active_capital = allocation * trade_size_multiplier * LEVERAGE_SCALAR
+                        
+                        # Deduct 0.05% spread crossing penalty
+                        entry_friction_cost = active_capital * 0.0005
+                        portfolio_returns.iloc[i] -= entry_friction_cost
                 
                 # 2. Manage Open Position (if active)
                 elif in_position != 0:
                     bars_held = i - entry_idx
                     
-                    # Calculate Mark-to-Market tick P&L for the equity curve
                     if prev_price != 0:
-                        tick_ret = (current_price - prev_price) * in_position * allocation
+                        # UPGRADE 3: Optimized Volatility Scaling (Alpaca Margin Limit)
+                        LEVERAGE_SCALAR = 4.0
+                        active_capital = allocation * trade_size_multiplier * LEVERAGE_SCALAR
+                        tick_ret = (current_price - prev_price) * in_position * active_capital
                     else:
                         tick_ret = 0
                         
                     portfolio_returns.iloc[i] += tick_ret
                     
-                    # 3. Check Triple Barriers
                     if entry_price != 0:
                         trade_return = (current_price / entry_price - 1) * in_position
                     else:
                         trade_return = 0
                         
-                    # pt_sl=[1, 2] -> Profit Take = 1x Volatility, Stop Loss = 2x Volatility
-                    profit_take_threshold = current_vol * 1.0
-                    stop_loss_threshold = -(current_vol * 2.0)
+                    # Barrier Skew Optimization [2, 1]
+                    # Cut losses strictly at 1 standard deviation.
+                    # Let mean-reverting winners run to 2 standard deviations.
+                    profit_take_threshold = current_vol * 2
+                    stop_loss_threshold = -(current_vol * 1.0)
                     
                     hit_pt = trade_return >= profit_take_threshold
                     hit_sl = trade_return <= stop_loss_threshold
-                    hit_time = bars_held >= 120  # t1=120 (10 hours of 5-min bars)
+                    hit_time = bars_held >= 120
                     
-                    # Exit the trade if any barrier is touched
-                    if hit_pt or hit_sl or hit_time:
+                    # Mean Reversion Early Exit
+                    # If long (Z < -2), exit when Z crosses above 0
+                    # If short (Z > 2), exit when Z crosses below 0
+                    hit_mean_reversion = False
+                    if in_position == 1 and current_z >= 0:
+                        hit_mean_reversion = True
+                    elif in_position == -1 and current_z <= 0:
+                        hit_mean_reversion = True
+                    
+                    # Exit the trade if any barrier or mean reversion is touched
+                    if hit_pt or hit_sl or hit_time or hit_mean_reversion:
+                        
+                        # --- REALITY CHECK: EXIT FRICTION ---
+                        # Deduct 0.05% spread crossing penalty
+                        exit_friction_cost = active_capital * 0.0005
+                        portfolio_returns.iloc[i] -= exit_friction_cost
+                        
                         in_position = 0 
                         entry_price = 0.0
                         entry_idx = 0
+                        trade_size_multiplier = 0.0
 
         # 4. Fetch SPY from the CSV for the baseline comparison
         csv_path = os.path.join(self.data_dir, "raw_macro_data.csv")
@@ -268,43 +317,49 @@ class VectorizedBacktester:
         fig = plt.figure(figsize=(14, 10))
         gs = GridSpec(3, 1, height_ratios=[2, 1, 1])
         
-        # Calculate Cumulative Returns
-        portfolio_returns = portfolio_returns.dropna()
-        cum_returns = portfolio_returns.cumsum()
+       # --- THE ALIGNMENT FIX ---
+        WARMUP_BARS = 2340
         
-        # Calculate SPY baseline (Buy & Hold) for comparison
-        spy_returns = spy_data.pct_change().dropna().cumsum() * 100 
+        # Slice off the warm-up period so both assets start at the exact same time
+        active_portfolio = portfolio_returns.iloc[WARMUP_BARS:]
+        active_spy = spy_data.reindex(active_portfolio.index).ffill()
+        
+        # Calculate Cumulative Returns for the Bot
+        cum_returns = active_portfolio.cumsum()
+        
+        # Calculate SPY baseline starting from 0% on the exact same day
+        spy_returns = (active_spy.pct_change().fillna(0).cumsum()) * 100 
         
         # Subplot 1: Equity Curve
         ax1 = fig.add_subplot(gs[0])
-        ax1.plot(cum_returns.index, cum_returns, color='#00ffcc', linewidth=2, label='Decoupled Agent (Stat-Arb)')
-        ax1.plot(spy_returns.index, spy_returns, color='#555555', linewidth=1, linestyle='--', label='SPY Baseline')
+        ax1.plot(cum_returns.index, cum_returns, color='#00ffcc', linewidth=2, label='Decoupled Agent (Stat-Arb P&L)')
+        ax1.plot(spy_returns.index, spy_returns, color='#555555', linewidth=1, linestyle='--', label='SPY Baseline (%)')
+        
         ax1.set_title('Historical Out-of-Sample Performance Estimate', fontsize=14, fontweight='bold')
-        ax1.set_ylabel('Cumulative P&L (Dollar-Neutral)')
+        ax1.set_ylabel('Cumulative Return')
         ax1.grid(color='#222222', linestyle='--')
         ax1.legend(loc='upper left')
         
-        # Calculate Drawdown
+        # Calculate Drawdown based strictly on active trading period
         rolling_max = cum_returns.cummax()
         drawdown = cum_returns - rolling_max
         
         # Subplot 2: Underwater Plot (Drawdown)
         ax2 = fig.add_subplot(gs[1], sharex=ax1)
         ax2.fill_between(drawdown.index, drawdown, 0, color='#ff3366', alpha=0.5)
-        ax2.set_ylabel('Drawdown')
+        ax2.set_ylabel('Drawdown ($)')
         ax2.set_title('Underwater Curve', fontsize=12)
         ax2.grid(color='#222222', linestyle='--')
         
         # Subplot 3: Daily Return Volatility
         ax3 = fig.add_subplot(gs[2], sharex=ax1)
-        ax3.bar(portfolio_returns.index, portfolio_returns, color='#ffcc00', alpha=0.7)
+        ax3.bar(active_portfolio.index, active_portfolio, color='#ffcc00', alpha=0.7)
         ax3.set_ylabel('Tick Returns')
         ax3.set_title('5-Minute Interval Returns Distribution', fontsize=12)
         ax3.grid(color='#222222', linestyle='--')
         
         plt.tight_layout()
         
-        # Save the image instead of trying to open a GUI window inside Docker
         output_image = "backtest_tearsheet_3yr.png"
         plt.savefig(output_image, dpi=300, bbox_inches='tight', facecolor=fig.get_facecolor())
         print(f"\n[SUCCESS] Performance Tear Sheet saved as '{output_image}'")
@@ -313,10 +368,12 @@ class VectorizedBacktester:
         print("\n====== ESTIMATED HISTORICAL PERFORMANCE ======")
         print(f"Total Cumulative P&L: ${cum_returns.iloc[-1]:.2f} (Per Unit Leveraged)")
         print(f"Max Drawdown:         ${drawdown.min():.2f}")
-        print(f"Trade Density:        {len(portfolio_returns[portfolio_returns != 0])} Active 5-min intervals")
+        print(f"Trade Density:        {len(active_portfolio[active_portfolio != 0])} Active 5-min intervals")
         print("==============================================")
 
 
 if __name__ == "__main__":
     backtester = VectorizedBacktester()
     backtester.run_simulation()
+
+    
