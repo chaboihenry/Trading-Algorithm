@@ -1,5 +1,5 @@
 {
-    "timestamp": "2026-04-02T20:08:26.254703+00:00",
+    "timestamp": "2026-04-03T20:07:13.719642+00:00",
     "baskets": {
         "BAC_JPM_Spread": {
             "tickers": [
@@ -8,10 +8,10 @@
             ],
             "weights": {
                 "BAC": 1.0,
-                "JPM": -0.23434524009654897
+                "JPM": -0.2376707504333346
             },
-            "half_life": 4.965490514872173,
-            "capital_allocation": 0.034
+            "half_life": 4.68702052784951,
+            "capital_allocation": 0.0431
         },
         "C_GS_MS_Spread": {
             "tickers": [
@@ -21,10 +21,10 @@
             ],
             "weights": {
                 "C": 1.0,
-                "GS": 0.3033509102444521,
-                "MS": -2.060244705459401
+                "GS": 0.3497538727603935,
+                "MS": -2.318195646969933
             },
-            "half_life": 0.6538705450071248,
+            "half_life": 0.6560483453510015,
             "capital_allocation": 0.0
         },
         "COST_HYG_TLT_WMT_XLU_Spread": {
@@ -37,13 +37,13 @@
             ],
             "weights": {
                 "COST": 1.0,
-                "HYG": -784.1618950041227,
-                "TLT": 439.5073857382571,
-                "WMT": 15.488044390350627,
-                "XLU": -375.736611681478
+                "HYG": -252.73005701408422,
+                "TLT": 141.59764905917635,
+                "WMT": 3.324193546743393,
+                "XLU": -124.83093288135682
             },
-            "half_life": 0.052169893712047846,
-            "capital_allocation": 0.4756
+            "half_life": 0.05112709707446492,
+            "capital_allocation": 0.4451
         },
         "CVX_XLE_Spread": {
             "tickers": [
@@ -52,10 +52,10 @@
             ],
             "weights": {
                 "CVX": 1.0,
-                "XLE": -3.1387113614844524
+                "XLE": -3.1161454221423597
             },
-            "half_life": 0.05919504548375446,
-            "capital_allocation": 0.032
+            "half_life": 0.058348589894136924,
+            "capital_allocation": 0.0339
         },
         "DIS_XLF_Spread": {
             "tickers": [
@@ -64,9 +64,9 @@
             ],
             "weights": {
                 "DIS": 1.0,
-                "XLF": -2.7341612651261404
+                "XLF": -2.792167757602735
             },
-            "half_life": 4.413814804723982,
+            "half_life": 4.338295479970382,
             "capital_allocation": 0.0
         },
         "DUK_SO_Spread": {
@@ -76,10 +76,10 @@
             ],
             "weights": {
                 "DUK": 1.0,
-                "SO": -1.436976701791132
+                "SO": -1.4199519469802808
             },
-            "half_life": 0.3027877102508848,
-            "capital_allocation": 0.0091
+            "half_life": 0.2808282556189578,
+            "capital_allocation": 0.0014
         },
         "EOG_XOM_Spread": {
             "tickers": [
@@ -88,9 +88,9 @@
             ],
             "weights": {
                 "EOG": 1.0,
-                "XOM": -0.9282056847353687
+                "XOM": -0.9659545756252537
             },
-            "half_life": 0.22831845020572944,
+            "half_life": 0.21716154823460881,
             "capital_allocation": 0.0004
         },
         "GOOG_GOOGL_Spread": {
@@ -100,10 +100,10 @@
             ],
             "weights": {
                 "GOOG": 1.0,
-                "GOOGL": -1.0300024219169788
+                "GOOGL": -1.0312060709929034
             },
-            "half_life": 0.16278747295172058,
-            "capital_allocation": 0.0002
+            "half_life": 0.16093641626895783,
+            "capital_allocation": 0.0
         },
         "HD_LOW_Spread": {
             "tickers": [
@@ -112,10 +112,10 @@
             ],
             "weights": {
                 "HD": 1.0,
-                "LOW": -1.1941264356862216
+                "LOW": -1.202548633962292
             },
-            "half_life": 3.7651507718397794,
-            "capital_allocation": 0.1018
+            "half_life": 3.9014520838142093,
+            "capital_allocation": 0.1045
         },
         "KO_VZ_Spread": {
             "tickers": [
@@ -124,10 +124,10 @@
             ],
             "weights": {
                 "KO": 1.0,
-                "VZ": -0.9423057953618541
+                "VZ": -0.9230598109182183
             },
-            "half_life": 1.8002818300114025,
-            "capital_allocation": 0.2247
+            "half_life": 1.8052513920471773,
+            "capital_allocation": 0.247
         },
         "MA_V_Spread": {
             "tickers": [
@@ -136,9 +136,9 @@
             ],
             "weights": {
                 "MA": 1.0,
-                "V": -1.6598103717600132
+                "V": -1.6822813607556304
             },
-            "half_life": 1.497237009868478,
+            "half_life": 1.4376993571143357,
             "capital_allocation": 0.0
         },
         "SMH_TSM_Spread": {
@@ -148,40 +148,40 @@
             ],
             "weights": {
                 "SMH": 1.0,
-                "TSM": -0.4968703295653821
+                "TSM": -0.47785486467337407
             },
-            "half_life": 8.526416168775373,
-            "capital_allocation": 0.1222
+            "half_life": 7.49808577699702,
+            "capital_allocation": 0.1247
         }
     },
     "flat_list": [
-        "MS",
-        "CVX",
-        "XLE",
-        "WMT",
-        "EOG",
-        "XOM",
-        "BAC",
-        "TLT",
-        "C",
-        "LOW",
-        "GOOG",
-        "COST",
-        "HD",
-        "VZ",
-        "V",
-        "SO",
-        "SMH",
-        "DUK",
-        "JPM",
-        "DIS",
-        "KO",
         "GOOGL",
+        "DIS",
+        "C",
+        "COST",
+        "VZ",
+        "TLT",
+        "BAC",
+        "KO",
         "TSM",
-        "XLF",
+        "CVX",
+        "EOG",
         "HYG",
+        "JPM",
+        "V",
+        "XLF",
+        "XLE",
+        "SO",
+        "XOM",
+        "GOOG",
+        "SMH",
+        "MS",
+        "MA",
+        "LOW",
+        "HD",
         "XLU",
-        "GS",
-        "MA"
+        "WMT",
+        "DUK",
+        "GS"
     ]
 }
