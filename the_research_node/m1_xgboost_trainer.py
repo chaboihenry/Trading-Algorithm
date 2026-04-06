@@ -334,8 +334,15 @@ def train_meta_labeler():
     best_model.save_model(model_path)
     print(f"[SAVED] {model_name} securely exported to {MODELS_DIR}/")
     
-    with open(os.path.join(MODELS_DIR, "active_model_version.txt"), "w") as f:
-        f.write(model_name)
+    # Dynamically extract the features directly from the XGBoost memory
+    used_features = best_model.feature_names
+    feature_str = ", ".join(used_features) if used_features else "Unknown"
+    
+    version_file = os.path.join(MODELS_DIR, "active_model_version.txt")
+    
+    # 'a' mode appends the new model to the bottom of the ledger automatically
+    with open(version_file, "a") as f:
+        f.write(f"Model: {model_name} | ROC-AUC: {roc_score:.4f} | Features: [{feature_str}]\n")
 
 if __name__ == "__main__":
     train_meta_labeler()

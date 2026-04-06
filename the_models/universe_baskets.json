@@ -1,5 +1,19 @@
 {
-    "timestamp": "2026-04-06T23:43:07.826073+00:00",
+    "historical_basket_names": [
+        "AVGO_NVDA_Spread",
+        "BAC_JPM_Spread",
+        "C_GS_MS_Spread",
+        "COST_HYG_TLT_WMT_XLU_Spread",
+        "CVX_XLE_Spread",
+        "DIS_XLF_Spread",
+        "DUK_SO_Spread",
+        "EOG_XOM_Spread",
+        "GOOG_GOOGL_Spread",
+        "HD_LOW_Spread",
+        "KO_VZ_Spread",
+        "MA_V_Spread",
+        "SMH_TSM_Spread"
+    ],
     "baskets": {
         "AVGO_NVDA_Spread": {
             "tickers": [
@@ -165,37 +179,5 @@
             "half_life": 7.707860531604024,
             "last_seen": "2026-04-06T23:43:07.826073+00:00"
         }
-    },
-    "flat_list": [
-        "EOG",
-        "AVGO",
-        "DIS",
-        "V",
-        "TLT",
-        "HYG",
-        "GS",
-        "C",
-        "JPM",
-        "LOW",
-        "KO",
-        "WMT",
-        "BAC",
-        "XLU",
-        "MS",
-        "XOM",
-        "CVX",
-        "TSM",
-        "GOOG",
-        "SMH",
-        "VZ",
-        "COST",
-        "SO",
-        "XLE",
-        "MA",
-        "GOOGL",
-        "HD",
-        "DUK",
-        "NVDA",
-        "XLF"
-    ]
+    }
 }

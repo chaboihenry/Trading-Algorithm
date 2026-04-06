@@ -108,11 +108,6 @@ def test_cointegration(aligned_data: pd.DataFrame, tickers: list):
     return False, None, None
 
 def enforce_websocket_limit(baskets: dict, max_tickers: int = 30):
-    """
-    Recursively drops the lowest-conviction baskets until the total unique
-    ticker count across all remaining strategies is <= max_tickers.
-    Protects the Alpaca IEX Free Tier websocket connection.
-    """
     while True:
         unique_tickers = set()
         for data in baskets.values():
@@ -166,6 +161,50 @@ def run_discovery_pipeline():
                 'half_life': hl_days
             }
             
+    target_dir = 'the_models'
+    os.makedirs(target_dir, exist_ok=True)
+
+    # capture all structurally sound baskets before websocket truncation
+    ledger_path = os.path.join(target_dir, 'universe_baskets.json')
+    
+    # initialize the new structured payload with an easy-access flat list
+    ledger_payload = {
+        "historical_basket_names": [],
+        "baskets": {}
+    }
+    
+    # load existing history to preserve temporarily broken cointegration pairs
+    if os.path.exists(ledger_path):
+        try:
+            with open(ledger_path, 'r') as f:
+                existing_data = json.load(f)
+                
+                # handle migration from old flat dictionary to new nested structure
+                if "historical_basket_names" in existing_data and "baskets" in existing_data:
+                    ledger_payload = existing_data
+                else:
+                    ledger_payload["baskets"] = existing_data
+        except Exception as e:
+            print(f"[WARNING] Could not read existing ledger. Starting fresh. Error: {e}")
+            
+    # inject newly confirmed baskets into the nested dictionary with a timestamp
+    current_time = pd.Timestamp.now(tz='UTC').isoformat()
+    for basket_name, basket_data in confirmed_baskets.items():
+        basket_data['last_seen'] = current_time
+        ledger_payload["baskets"][basket_name] = basket_data
+        
+    # auto-generate the flat list of all historical names for instant O(1) lookups
+    ledger_payload["historical_basket_names"] = list(ledger_payload["baskets"].keys())
+        
+    # save the master ledger atomically using posix swap
+    temp_ledger_path = os.path.join(target_dir, 'universe_baskets_temp.json')
+    with open(temp_ledger_path, 'w') as f:
+        json.dump(ledger_payload, f, indent=4)
+    os.replace(temp_ledger_path, ledger_path)
+    
+    tracked_count = len(ledger_payload["historical_basket_names"])
+    print(f"[SYSTEM] Master Ledger updated. Tracking {tracked_count} historical cointegrated baskets.")
+
     # ENFORCE ALPACA WEBSOCKET LIMIT BEFORE SAVING
     confirmed_baskets = enforce_websocket_limit(confirmed_baskets, max_tickers=30)
     
@@ -176,13 +215,10 @@ def run_discovery_pipeline():
            
     if approved_tickers:
         payload = {
-            "timestamp": pd.Timestamp.now(tz='UTC').isoformat(),
+            "timestamp": current_time,
             "baskets": confirmed_baskets,
             "flat_list": list(approved_tickers)
         }
-        
-        target_dir = 'the_models'
-        os.makedirs(target_dir, exist_ok=True)
         
         # Define paths for the atomic swap
         final_path = os.path.join(target_dir, 'curated_universe.json')
