@@ -177,9 +177,9 @@ class VectorizedBacktester:
                 win_probs = self.meta_labeler.predict(dmatrix)
                 
                 # 3. Filter base signals SAFELY without shrinking the array length
-                # Strict Confidence Thresholding
-                # Force the model to only take trades with 55% conviction or higher
-                meta_mask = pd.Series(win_probs > 0.55, index=valid_idx)
+                # Strict Confidence Thresholding (AFML Chapter 10)
+                # The model must have 65% conviction to authorize capital deployment
+                meta_mask = pd.Series(win_probs > 0.65, index=valid_idx)
                 
                 # Create a blank full-length series, then map the approved signals into it
                 filtered_signals = pd.Series(0, index=df.index)
@@ -238,7 +238,7 @@ class VectorizedBacktester:
                             trade_size_multiplier = 0.5 
                             
                         # --- REALITY CHECK: ENTRY FRICTION ---
-                        LEVERAGE_SCALAR = 4.0
+                        LEVERAGE_SCALAR = 20.0
                         active_capital = allocation * trade_size_multiplier * LEVERAGE_SCALAR
                         
                         # Deduct 0.05% spread crossing penalty
@@ -250,9 +250,11 @@ class VectorizedBacktester:
                     bars_held = i - entry_idx
                     
                     if prev_price != 0:
-                        # UPGRADE 3: Optimized Volatility Scaling (Alpaca Margin Limit)
-                        LEVERAGE_SCALAR = 4.0
-                        active_capital = allocation * trade_size_multiplier * LEVERAGE_SCALAR
+                        # Volatility Scaling based on High-Conviction Edge
+                        LEVERAGE_SCALAR = 20.0 
+                        active_capital = allocation * LEVERAGE_SCALAR
+                        
+                        # Apply true dollar-neutral leverage to the price action
                         tick_ret = (current_price - prev_price) * in_position * active_capital
                     else:
                         tick_ret = 0
@@ -286,7 +288,7 @@ class VectorizedBacktester:
                     # Exit the trade if any barrier or mean reversion is touched
                     if hit_pt or hit_sl or hit_time or hit_mean_reversion:
                         
-                        # --- REALITY CHECK: EXIT FRICTION ---
+                        # Reality Check: Exit Friction
                         # Deduct 0.05% spread crossing penalty
                         exit_friction_cost = active_capital * 0.0005
                         portfolio_returns.iloc[i] -= exit_friction_cost
@@ -318,7 +320,7 @@ class VectorizedBacktester:
         gs = GridSpec(3, 1, height_ratios=[2, 1, 1])
         
        # --- THE ALIGNMENT FIX ---
-        WARMUP_BARS = 2340
+        WARMUP_BARS = 1170  # 15 days * 78 bars/day = 1170 bars
         
         # Slice off the warm-up period so both assets start at the exact same time
         active_portfolio = portfolio_returns.iloc[WARMUP_BARS:]
