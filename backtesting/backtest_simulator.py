@@ -126,26 +126,19 @@ class VectorizedBacktester:
             half_life = params.get('half_life', 1.0)
             allocation = params.get('capital_allocation', 0.0)
             
-            # X-RAY 1: Allocation Check
             if allocation <= 0:
-                print(f"[WARNING] Skipping {spread_name}: Capital allocation is {allocation}")
                 continue
                 
             # A. Calculate Synthetic Spread
             spread_val = pd.Series(0.0, index=df.index)
             for ticker, w in weights.items():
-                price_col = f'{ticker}_price'
-                if price_col in df.columns:
-                    spread_val += df[price_col] * w
-                elif ticker in df.columns:
+                if ticker in df.columns:
                     spread_val += df[ticker] * w
                     
-            # X-RAY 2: Column Match Check
             if spread_val.eq(0).all():
-                print(f"[WARNING] Skipping {spread_name}: Spread value is flat $0.00. Check Parquet column names.")
                 continue
                     
-            # B. THE ENGINE: Calculate Z-Scores (UPGRADED TO EWMA)
+            # B. THE ENGINE: Calculate Z-Scores
             window = max(int(half_life * 78), 30) 
             
             # EWMA completely eliminates the "Drop-Off Effect" of simple rolling windows
@@ -155,9 +148,10 @@ class VectorizedBacktester:
             rolling_std = rolling_std.replace(0, np.nan)
             z_score = (spread_val - rolling_mean) / rolling_std
             
+            # The Engine: Optimized Z-Score Entry
             base_signals = pd.Series(0, index=df.index)
-            base_signals[z_score < -2.0] = 1
-            base_signals[z_score > 2.0] = -1
+            base_signals[z_score < -2.21] = 1
+            base_signals[z_score > 2.21] = -1
             
            # C. THE BRAIN: XGBoost Meta-Labeling
             if self.meta_labeler is not None:
@@ -242,7 +236,7 @@ class VectorizedBacktester:
                             trade_size_multiplier = 0.5 
                             
                         # --- REALITY CHECK: ENTRY FRICTION ---
-                        LEVERAGE_SCALAR = 20.0
+                        LEVERAGE_SCALAR = 30.5 # Optimized Monte Carlo Level
                         active_capital = allocation * trade_size_multiplier * LEVERAGE_SCALAR
                         
                         # Deduct 0.05% spread crossing penalty
@@ -254,7 +248,7 @@ class VectorizedBacktester:
                     bars_held = i - entry_idx
                     
                     if prev_price != 0:
-                        LEVERAGE_SCALAR = 20.0
+                        LEVERAGE_SCALAR = 30.5 # Optimized Monte Carlo Level
                         active_capital = allocation * trade_size_multiplier * LEVERAGE_SCALAR
                         tick_ret = (current_price - prev_price) * in_position * active_capital
                     else:
@@ -267,9 +261,9 @@ class VectorizedBacktester:
                     else:
                         trade_return = 0
                         
-                    # Barrier Skew Optimization [2, 1]
-                    profit_take_threshold = current_vol * 2.0
-                    stop_loss_threshold = -(current_vol * 1.0)
+                    # Optimized Triple Barrier Skew [1.55, 1.67]
+                    profit_take_threshold = current_vol * 1.55
+                    stop_loss_threshold = -(current_vol * 1.67)
                     
                     hit_pt = trade_return >= profit_take_threshold
                     hit_sl = trade_return <= stop_loss_threshold
@@ -286,7 +280,7 @@ class VectorizedBacktester:
                     if hit_pt or hit_sl or hit_time or hit_mean_reversion:
                         
                         # --- REALITY CHECK: EXIT FRICTION ---
-                        LEVERAGE_SCALAR = 20.0
+                        LEVERAGE_SCALAR = 30.5 # Optimized Monte Carlo Level
                         active_capital = allocation * trade_size_multiplier * LEVERAGE_SCALAR
                         exit_friction_cost = active_capital * 0.0005
                         portfolio_returns.iloc[i] -= exit_friction_cost
