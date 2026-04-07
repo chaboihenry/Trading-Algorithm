@@ -126,16 +126,23 @@ class VectorizedBacktester:
             half_life = params.get('half_life', 1.0)
             allocation = params.get('capital_allocation', 0.0)
             
+            # X-RAY 1: Allocation Check
             if allocation <= 0:
+                print(f"[WARNING] Skipping {spread_name}: Capital allocation is {allocation}")
                 continue
                 
             # A. Calculate Synthetic Spread
             spread_val = pd.Series(0.0, index=df.index)
             for ticker, w in weights.items():
-                if ticker in df.columns:
+                price_col = f'{ticker}_price'
+                if price_col in df.columns:
+                    spread_val += df[price_col] * w
+                elif ticker in df.columns:
                     spread_val += df[ticker] * w
                     
+            # X-RAY 2: Column Match Check
             if spread_val.eq(0).all():
+                print(f"[WARNING] Skipping {spread_name}: Spread value is flat $0.00. Check Parquet column names.")
                 continue
                     
             # B. THE ENGINE: Calculate Z-Scores (UPGRADED TO EWMA)
@@ -177,9 +184,8 @@ class VectorizedBacktester:
                 win_probs = self.meta_labeler.predict(dmatrix)
                 
                 # 3. Filter base signals SAFELY without shrinking the array length
-                # Strict Confidence Thresholding (AFML Chapter 10)
-                # The model must have 65% conviction to authorize capital deployment
-                meta_mask = pd.Series(win_probs > 0.65, index=valid_idx)
+                # Strict Confidence Thresholding, force the model to only take trades with 55% conviction or higher
+                meta_mask = pd.Series(win_probs > 0.55, index=valid_idx)
                 
                 # Create a blank full-length series, then map the approved signals into it
                 filtered_signals = pd.Series(0, index=df.index)
@@ -204,7 +210,6 @@ class VectorizedBacktester:
             trade_size_multiplier = 0.0 
             
             # Define a 30-day warm-up period to completely bypass early data artifacts
-            # 78 5-min bars per day * 30 days = 2340 bars
             WARMUP_BARS = 2340 
             
             for i in range(1, len(df)):
@@ -218,7 +223,6 @@ class VectorizedBacktester:
                 if in_position == 0 and i > WARMUP_BARS:
                     
                     # Microstructure Time Filter
-                    # Forbid new entries during the chaotic open (9:30-9:45) and close (15:45-16:00)
                     is_safe_time = (current_time >= pd.Timestamp("09:45").time()) and \
                                    (current_time <= pd.Timestamp("15:45").time())
                     
@@ -250,11 +254,8 @@ class VectorizedBacktester:
                     bars_held = i - entry_idx
                     
                     if prev_price != 0:
-                        # Volatility Scaling based on High-Conviction Edge
-                        LEVERAGE_SCALAR = 20.0 
-                        active_capital = allocation * LEVERAGE_SCALAR
-                        
-                        # Apply true dollar-neutral leverage to the price action
+                        LEVERAGE_SCALAR = 20.0
+                        active_capital = allocation * trade_size_multiplier * LEVERAGE_SCALAR
                         tick_ret = (current_price - prev_price) * in_position * active_capital
                     else:
                         tick_ret = 0
@@ -267,9 +268,7 @@ class VectorizedBacktester:
                         trade_return = 0
                         
                     # Barrier Skew Optimization [2, 1]
-                    # Cut losses strictly at 1 standard deviation.
-                    # Let mean-reverting winners run to 2 standard deviations.
-                    profit_take_threshold = current_vol * 2
+                    profit_take_threshold = current_vol * 2.0
                     stop_loss_threshold = -(current_vol * 1.0)
                     
                     hit_pt = trade_return >= profit_take_threshold
@@ -277,8 +276,6 @@ class VectorizedBacktester:
                     hit_time = bars_held >= 120
                     
                     # Mean Reversion Early Exit
-                    # If long (Z < -2), exit when Z crosses above 0
-                    # If short (Z > 2), exit when Z crosses below 0
                     hit_mean_reversion = False
                     if in_position == 1 and current_z >= 0:
                         hit_mean_reversion = True
@@ -288,8 +285,9 @@ class VectorizedBacktester:
                     # Exit the trade if any barrier or mean reversion is touched
                     if hit_pt or hit_sl or hit_time or hit_mean_reversion:
                         
-                        # Reality Check: Exit Friction
-                        # Deduct 0.05% spread crossing penalty
+                        # --- REALITY CHECK: EXIT FRICTION ---
+                        LEVERAGE_SCALAR = 20.0
+                        active_capital = allocation * trade_size_multiplier * LEVERAGE_SCALAR
                         exit_friction_cost = active_capital * 0.0005
                         portfolio_returns.iloc[i] -= exit_friction_cost
                         
