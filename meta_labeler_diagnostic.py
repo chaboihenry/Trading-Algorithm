@@ -1,14 +1,19 @@
+# the_research_node/meta_labeler_diagnostic.py
+# PEPE: Precision vs Recall autopsy for the Meta-Labeler v2
+# PEPE: Uses the EXACT same data pipeline as the trainer — no custom loaders
+
 import os
 import json
+import gc
 import pandas as pd
 import numpy as np
 import xgboost as xgb
 from sklearn.metrics import (
     precision_score, recall_score, f1_score,
-    confusion_matrix, classification_report,
-    precision_recall_curve, roc_auc_score
+    confusion_matrix, roc_auc_score
 )
 
+# PEPE: Import everything directly from the trainer so features are identical
 from the_research_node.m1_xgboost_trainer import (
     construct_m1_dibs,
     get_offline_microstructure,
@@ -22,16 +27,14 @@ MODELS_DIR = "the_models"
 
 
 def load_model():
-    # Load the active model version from the ledger file
+    """PEPE: Load the active model version from the ledger file"""
     version_path = os.path.join(MODELS_DIR, "active_model_version.txt")
 
     with open(version_path, "r") as f:
         lines = f.readlines()
 
-    # Grab the latest entry (last line in the ledger)
     latest = lines[-1].strip()
 
-    # Extract model filename from ledger format: "Model: meta_labeler_v2.json | ..."
     if "Model:" in latest:
         model_name = latest.split("Model:")[1].split("|")[0].strip()
     else:
@@ -46,6 +49,10 @@ def load_model():
 
 
 def reconstruct_dataset():
+    """
+    PEPE: Carbon copy of the trainer's data pipeline (Steps 1-8).
+    If this produces different features than training, the diagnosis is invalid.
+    """
     with open(UNIVERSE_PATH, "r") as f:
         universe_data = json.load(f)
 
@@ -59,13 +66,13 @@ def reconstruct_dataset():
 
         print(f"\n[REBUILD] Processing: {name}")
 
-        # 1. Structural DIBs on anchor
+        # 1. Build Structural DIBs — same function, same threshold
         dibs = construct_m1_dibs(anchor, threshold=50_000_000)
         if dibs.empty:
             print(f"  >> [SKIP] No DIBs for {anchor}")
             continue
 
-        # 2. Load 1-min bars for the full basket
+        # 2. Load 1-min bars — same method as trainer
         prices = {}
         for t in tickers:
             path = f"/Volumes/Vault/quant_data/tick data storage/{t}/parquet"
@@ -83,6 +90,7 @@ def reconstruct_dataset():
             prices[t] = df_t.set_index("timestamp")["price"].resample("1min").last().ffill()
 
         if len(prices) != len(tickers):
+            print(f"  >> [SKIP] Missing price data for {name}")
             continue
 
         # 3. Spread construction
@@ -93,11 +101,13 @@ def reconstruct_dataset():
         spread_dibs = spread_continuous.reindex(unique_dib_index, method="ffill").dropna()
 
         if len(spread_dibs) < 100:
+            print(f"  >> [SKIP] Only {len(spread_dibs)} DIB samples for {name}")
             continue
 
-        # 4. Features (identical to trainer)
+        # 4. Features — identical to trainer
         vol = get_daily_vol(spread_dibs)
         opt_d, spread_fd = find_optimal_d(spread_dibs)
+        print(f"  >> Stationarity at d={opt_d:.2f} | {len(spread_dibs)} DIB samples")
 
         z = (spread_dibs - spread_dibs.rolling(50).mean()) / spread_dibs.rolling(50).std()
         events = z[(z > 2.5) | (z < -2.5)].to_frame("z")
@@ -105,6 +115,7 @@ def reconstruct_dataset():
         events = events.dropna()
 
         if events.empty:
+            print(f"  >> [SKIP] No z-score events for {name}")
             continue
 
         # 5. Triple barrier labels
@@ -115,20 +126,24 @@ def reconstruct_dataset():
         df_anchor["size"] = 100
         micro = get_offline_microstructure(df_anchor)
 
-        # 7. Assemble feature matrix
+        # 7. Feature matrix
         X = pd.DataFrame(index=labels.index)
         X["frac_diff"] = spread_fd.reindex(labels.index).ffill()
         X["volatility"] = vol.reindex(labels.index).ffill()
         X["signal_strength"] = events["z"]
 
         if not micro.empty:
-            X["order_flow_imbalance"] = micro["order_flow_imbalance"].reindex(labels.index).ffill().fillna(0)
-            X["effective_spread"] = micro["effective_spread"].reindex(labels.index).ffill().fillna(0)
+            X["order_flow_imbalance"] = (
+                micro["order_flow_imbalance"].reindex(labels.index).ffill().fillna(0)
+            )
+            X["effective_spread"] = (
+                micro["effective_spread"].reindex(labels.index).ffill().fillna(0)
+            )
 
         valid = X.dropna()
         y = labels["bin"].reindex(valid.index)
 
-        # PEPE: Store metadata so we can trace WHERE failures happen
+        # PEPE: Metadata for per-spread breakdown
         meta = pd.DataFrame(index=valid.index)
         meta["spread_name"] = name
         meta["z_score"] = events["z"].reindex(valid.index)
@@ -138,31 +153,38 @@ def reconstruct_dataset():
         all_y.append(y)
         all_meta.append(meta)
 
-    X_full = pd.concat(all_X)
-    y_full = pd.concat(all_y)
-    meta_full = pd.concat(all_meta)
+        print(f"  >> [DONE] {name}: {len(valid)} setups | Win rate: {y.mean()*100:.1f}%")
 
-    return X_full, y_full, meta_full
+        # PEPE: Free per-spread data before loading the next one
+        del prices, spread_continuous, dibs, spread_dibs
+        del vol, spread_fd, z, events, labels, micro, X, valid, y, meta
+        gc.collect()
+
+    if not all_X:
+        print("[CRITICAL] No spreads produced valid features.")
+        return pd.DataFrame(), pd.Series(dtype=float), pd.DataFrame()
+
+    return pd.concat(all_X), pd.concat(all_y), pd.concat(all_meta)
 
 
 def run_diagnostic():
     print("====== META-LABELER v2 PRECISION vs RECALL AUTOPSY ======\n")
 
-    # 1. Load model and rebuild dataset
     model, model_name = load_model()
     X, y, meta = reconstruct_dataset()
+
+    if X.empty:
+        print("[ABORT] No data to diagnose.")
+        return
 
     print(f"\n[SYSTEM] Total setups reconstructed: {len(X)}")
     print(f"[SYSTEM] Class distribution: Wins={int(y.sum())} | Losses={int(len(y) - y.sum())}")
     print(f"[SYSTEM] Base win rate: {y.mean() * 100:.1f}%\n")
 
-    # 2. Predict probabilities
     dmatrix = xgb.DMatrix(X)
     probs = model.predict(dmatrix)
 
     # --- SECTION A: THRESHOLD SWEEP ---
-    # The 0.55 threshold in the backtest is hardcoded
-    # Let's see what happens at every threshold from 0.40 to 0.80
     print("=" * 70)
     print("SECTION A: THRESHOLD SWEEP (Your backtest uses 0.55)")
     print("=" * 70)
@@ -194,7 +216,7 @@ def run_diagnostic():
 
     print(f"\n[VERDICT] Optimal threshold by F1: {best_thresh:.2f} (F1={best_f1:.3f})")
 
-    # --- SECTION B: CONFUSION MATRIX AT CURRENT THRESHOLD ---
+    # --- SECTION B: CONFUSION MATRIX @ 0.55 ---
     print("\n" + "=" * 70)
     print("SECTION B: CONFUSION MATRIX @ 0.55 THRESHOLD")
     print("=" * 70)
@@ -202,14 +224,13 @@ def run_diagnostic():
     preds_current = (probs >= 0.55).astype(int)
     cm = confusion_matrix(y, preds_current)
 
-    # PEPE: Label the quadrants so the diagnosis is obvious
     tn, fp, fn, tp = cm.ravel()
     print(f"\n  True Positives  (Good trades TAKEN):    {tp}")
     print(f"  False Positives (Bad trades TAKEN):     {fp}  <-- Precision problem")
     print(f"  False Negatives (Good trades MISSED):   {fn}  <-- Recall problem")
     print(f"  True Negatives  (Bad trades BLOCKED):   {tn}")
 
-    # --- SECTION C: THE ACTUAL DIAGNOSIS ---
+    # --- SECTION C: DIAGNOSIS ---
     print("\n" + "=" * 70)
     print("SECTION C: DIAGNOSIS")
     print("=" * 70)
@@ -219,7 +240,12 @@ def run_diagnostic():
 
     print(f"\n  Precision: {prec:.3f}  (Of trades taken, what % actually won)")
     print(f"  Recall:    {rec:.3f}  (Of all winning setups, what % did we catch)")
-    print(f"  ROC-AUC:   {roc_auc_score(y, probs):.4f}")
+
+    try:
+        auc = roc_auc_score(y, probs)
+        print(f"  ROC-AUC:   {auc:.4f}")
+    except ValueError:
+        print("  ROC-AUC:   N/A (single class in dataset)")
 
     if prec > rec + 0.10:
         diagnosis = "LOW RECALL"
@@ -247,7 +273,6 @@ def run_diagnostic():
     print(f"  >>> {explanation}")
 
     # --- SECTION D: PER-SPREAD BREAKDOWN ---
-    # Identify which spreads are dragging down the score
     print("\n" + "=" * 70)
     print("SECTION D: PER-SPREAD PERFORMANCE")
     print("=" * 70)
@@ -271,7 +296,7 @@ def run_diagnostic():
             sr = recall_score(subset["actual"], subset["pred"], zero_division=0)
             print(f"    Precision: {sp:.3f} | Recall: {sr:.3f}")
         else:
-            print(f"    [INSUFFICIENT DATA]")
+            print("    [INSUFFICIENT DATA]")
 
     print("\n====== DIAGNOSTIC COMPLETE ======")
 
