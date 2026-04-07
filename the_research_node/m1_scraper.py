@@ -42,7 +42,7 @@ def flush_to_parquet(ticker):
     if ticker not in tick_buffer or not tick_buffer[ticker]: 
         return
 
-    base_path = f"/Volumes/Vault/quant_data/tick data storage/{ticker}/parquet"
+    base_path = f"/Volumes/Vault/quant_data/tick data storage/{ticker}/parquet/training_data"
     os.makedirs(base_path, exist_ok=True)
 
     df = pd.DataFrame(tick_buffer[ticker])

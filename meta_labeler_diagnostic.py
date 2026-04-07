@@ -71,7 +71,7 @@ def reconstruct_dataset():
         # 2. Load 1-min bars — safely filtering out massive duplicate files
         prices = {}
         for t in tickers:
-            path = f"/Volumes/Vault/quant_data/tick data storage/{t}/parquet"
+            path = f"/Volumes/Vault/quant_data/tick data storage/{t}/parquet/training_data"
             if not os.path.exists(path):
                 continue
                 

@@ -39,7 +39,7 @@ def sample_imbalance_bars(signed_dv_array, threshold):
 
 def construct_m1_dibs(ticker: str, threshold: float = 50_000_000):
     print(f"  >> Constructing Structural DIBs for Anchor Ticker: {ticker}...")
-    path = f"/Volumes/Vault/quant_data/tick data storage/{ticker}/parquet"
+    path = f"/Volumes/Vault/quant_data/tick data storage/{ticker}/parquet/training_data"
     
     files = [
         os.path.join(path, f)
@@ -226,7 +226,7 @@ def train_meta_labeler():
         # 2. Load fast 1-min time bars for the whole basket to calculate continuous spread
         prices = {}
         for t in tickers:
-            path = f"/Volumes/Vault/quant_data/tick data storage/{t}/parquet"
+            path = f"/Volumes/Vault/quant_data/tick data storage/{t}/parquet/training_data"
             files = [os.path.join(path, f) for f in os.listdir(path) if f.endswith('.parquet') and not f.startswith('._')]
             if not files: continue
             df_t = pd.concat([pd.read_parquet(f, columns=['timestamp', 'price']) for f in files])

@@ -29,7 +29,7 @@ def compile_historical_state(lookback_years: int = 3, models_dir: str = "the_mod
 
     # 3. Extract and align data from the Parquet Vault
     for ticker in target_tickers:
-        path = f"/Volumes/Vault/quant_data/tick data storage/{ticker}/parquet"
+        path = f"/Volumes/Vault/quant_data/tick data storage/{t}/parquet/training_data"
         
         if not os.path.exists(path):
             print(f"  -> [WARNING] Vault path missing for {ticker}. Skipping.")

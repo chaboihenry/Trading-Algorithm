@@ -29,7 +29,7 @@ def load_vault_data(cluster_tickers: list, lookback_days: int = 90):
     cutoff_str = cutoff_dt.strftime('%Y%m%d')
 
     for ticker in cluster_tickers:
-        path = f"/Volumes/Vault/quant_data/tick data storage/{ticker}/parquet"
+        path = f"/Volumes/Vault/quant_data/tick data storage/{ticker}/parquet/training_data"
         if not os.path.exists(path):
             continue
            

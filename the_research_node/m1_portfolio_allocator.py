@@ -86,7 +86,7 @@ def run_hrp_allocation():
         
         prices = {}
         for t in tickers:
-            path = f"/Volumes/Vault/quant_data/tick data storage/{t}/parquet"
+            path = f"/Volumes/Vault/quant_data/tick data storage/{t}/parquet/training_data"
             if not os.path.exists(path): continue
             
             f# Filter out the massive merged files and WRDS backups to prevent RAM exhaustion
