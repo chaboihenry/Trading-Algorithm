@@ -1,5 +1,3 @@
-# the_research_node/m1_portfolio_allocator.py
-
 import os
 import json
 import pandas as pd
@@ -91,7 +89,14 @@ def run_hrp_allocation():
             path = f"/Volumes/Vault/quant_data/tick data storage/{t}/parquet"
             if not os.path.exists(path): continue
             
-            files = [os.path.join(path, f) for f in os.listdir(path) if f.endswith('.parquet') and not f.startswith('._')]
+            f# Filter out the massive merged files and WRDS backups to prevent RAM exhaustion
+            files = [os.path.join(path, f) for f in os.listdir(path) 
+                     if f.endswith('.parquet') 
+                     and not f.startswith('._')
+                     and "merged" not in f
+                     and f != "ticks.parquet"
+                     and "wrds" not in f]
+            
             if not files: continue
             
             # Load all data to bypass alphabetical sorting mismatches

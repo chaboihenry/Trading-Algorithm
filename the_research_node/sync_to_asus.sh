@@ -1,5 +1,4 @@
 #!/bin/bash
-# sync_to_asus.sh
 
 echo "Committing updated models to GitHub..."
 git add the_models/

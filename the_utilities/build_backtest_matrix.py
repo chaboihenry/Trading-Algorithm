@@ -1,5 +1,3 @@
-# m1_research_node/data_tools/build_backtest_matrix.py
-
 import os
 import json
 import pandas as pd

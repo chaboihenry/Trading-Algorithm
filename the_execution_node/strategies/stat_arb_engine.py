@@ -1,5 +1,3 @@
-# the_execution_node/strategies/stat_arb_engine.py
-
 import os
 import json
 import pandas as pd

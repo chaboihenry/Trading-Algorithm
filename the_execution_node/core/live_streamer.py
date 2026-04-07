@@ -1,5 +1,3 @@
-# the_execution_node/core/live_streamer.py
-
 import os
 import json
 import asyncio

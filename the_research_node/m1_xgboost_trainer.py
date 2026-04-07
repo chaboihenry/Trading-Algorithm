@@ -1,5 +1,3 @@
-# the_research_node/m1_xgboost_trainer.py
-
 import os
 import json
 import glob
