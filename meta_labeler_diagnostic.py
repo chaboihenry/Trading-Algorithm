@@ -1,7 +1,3 @@
-# the_research_node/meta_labeler_diagnostic.py
-# PEPE: Precision vs Recall autopsy for the Meta-Labeler v2
-# PEPE: Uses the EXACT same data pipeline as the trainer — no custom loaders
-
 import os
 import json
 import gc
@@ -72,15 +68,20 @@ def reconstruct_dataset():
             print(f"  >> [SKIP] No DIBs for {anchor}")
             continue
 
-        # 2. Load 1-min bars — same method as trainer
+        # 2. Load 1-min bars — safely filtering out massive duplicate files
         prices = {}
         for t in tickers:
             path = f"/Volumes/Vault/quant_data/tick data storage/{t}/parquet"
+            if not os.path.exists(path):
+                continue
+                
+            # Ignore the massive merged/wrds duplicates
             files = [
                 os.path.join(path, f)
                 for f in os.listdir(path)
                 if f.endswith(".parquet") and not f.startswith("._")
             ]
+            
             if not files:
                 continue
             df_t = pd.concat(

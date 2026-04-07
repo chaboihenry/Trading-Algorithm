@@ -41,7 +41,11 @@ def construct_m1_dibs(ticker: str, threshold: float = 50_000_000):
     print(f"  >> Constructing Structural DIBs for Anchor Ticker: {ticker}...")
     path = f"/Volumes/Vault/quant_data/tick data storage/{ticker}/parquet"
     
-    files = [os.path.join(path, f) for f in os.listdir(path) if f.endswith('.parquet') and not f.startswith('._')]
+    files = [
+        os.path.join(path, f)
+        for f in os.listdir(path)
+        if f.endswith(".parquet") and not f.startswith("._")
+    ]
     if not files: 
         return pd.DataFrame()
         
