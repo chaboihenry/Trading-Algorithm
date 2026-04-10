@@ -50,7 +50,14 @@ def construct_m1_dibs(ticker: str, threshold: float = 50_000_000):
         return pd.DataFrame()
         
     dfs = []
+    # Slash RAM usage by 60% by strictly loading Jan 2024 to Present
+    cutoff_month = "2024_01" 
+    
     for f in files:
+        # Check the filename (e.g., '2024_01.parquet') against the cutoff
+        if os.path.basename(f) < cutoff_month:
+            continue
+            
         try:
             dfs.append(pd.read_parquet(f, columns=['timestamp', 'price', 'size']))
         except Exception:

@@ -14,11 +14,11 @@ WRDS_USERNAME = "henryvianna"
 UNIVERSE_PATH = "universe.txt"
 LOG_FILE = "logs/wrds_collection.log"
 
-# 5 years back from the latest available table (Feb 2026)
-START_DATE = datetime(2021, 3, 1)
+# PEPE: Resuming exactly at January 2022 to save you 3 hours of re-downloading
+START_DATE = datetime(2022, 1, 1)
 END_DATE = datetime(2026, 2, 24)
 
-# Strict schema for consistency across all files
+# PEPE: Strict schema for consistency across all files
 STRICT_SCHEMA = pa.schema([
     ("timestamp", pa.timestamp("ns", tz="UTC")),
     ("price", pa.float64()),
@@ -26,52 +26,32 @@ STRICT_SCHEMA = pa.schema([
     ("exchange", pa.string()),
 ])
 
-# How many tickers to query per SQL call to avoid WRDS timeouts
 TICKER_BATCH_SIZE = 30
 
 
 def load_universe():
-    # Reads the 113 symbols from universe.txt
     with open(UNIVERSE_PATH, "r") as f:
         return [line.strip() for line in f if line.strip()]
 
-
 def get_trading_days(start, end):
-    # Generates all potential trading days (Mon-Fri) in the range
     days = []
     current = start
     while current <= end:
-        if current.weekday() < 5:  # Mon=0, Fri=4
+        if current.weekday() < 5: 
             days.append(current)
         current += timedelta(days=1)
     return days
 
-
 def get_month_key(dt):
-    # Returns YYYY_MM string for grouping days into monthly files
     return dt.strftime("%Y_%m")
 
-
 def log(msg):
-    # Dual logging — terminal + file
     print(msg)
     os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
     with open(LOG_FILE, "a") as f:
         f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n")
 
-
-def build_timestamp(df):
-    # Combines WRDS 'date' + 'time_m' into a proper UTC nanosecond timestamp
-    df["timestamp"] = pd.to_datetime(
-        df["date"].astype(str) + " " + df["time_m"].astype(str)
-    )
-    df["timestamp"] = df["timestamp"].dt.tz_localize("US/Eastern").dt.tz_convert("UTC")
-    return df
-
-
 def query_single_day(db, date_str, ticker_batch):
-    # Pulls all trades for a batch of tickers from one daily ctm_ table.
-    # Filters: regular trades only (tr_corr='00'), no options (sym_suffix IS NULL), price > 0
     table_name = f"ctm_{date_str}"
     tickers_sql = ", ".join(f"'{t}'" for t in ticker_batch)
 
@@ -83,7 +63,6 @@ def query_single_day(db, date_str, ticker_batch):
         AND tr_corr = '00'
         AND price > 0
     """
-
     try:
         df = db.raw_sql(query)
         return df
@@ -95,58 +74,43 @@ def query_single_day(db, date_str, ticker_batch):
             log(f"  [ERROR] Query failed for {table_name}: {error_msg}")
             return pd.DataFrame()
 
+def clean_daily_batch(df):
+    # Cleans and deduplicates the dataframe immediately to free up RAM.
+    # format='mixed' protects against flat-second timestamp crashes
+    df["timestamp"] = pd.to_datetime(
+        df["date"].astype(str) + " " + df["time_m"].astype(str),
+        format='mixed'
+    )
+    df["timestamp"] = df["timestamp"].dt.tz_localize("US/Eastern").dt.tz_convert("UTC")
 
-def flush_month(ticker, month_key, rows):
-    # Writes a month's worth of trades to a single parquet file.
-    if not rows:
-        return 0
-
-    df = pd.concat(rows, ignore_index=True)
-
-    df = build_timestamp(df)
     df = df.rename(columns={"ex": "exchange"})
     df["price"] = df["price"].astype(float)
     df["size"] = df["size"].astype(float)
     df["exchange"] = df["exchange"].astype(str)
 
-    df = df[["timestamp", "price", "size", "exchange"]]
-
-    df = df.drop_duplicates(subset=["timestamp", "price", "size"], keep="first")
-    df = df.sort_values("timestamp").reset_index(drop=True)
-
-    # New Directory Structure
-    ticker_dir = f"/Volumes/Vault/quant_data/tick data storage/{ticker}/parquet/training_data"
-    os.makedirs(ticker_dir, exist_ok=True)
-    file_path = os.path.join(ticker_dir, f"{month_key}.parquet")
-
-    table = pa.Table.from_pandas(df, schema=STRICT_SCHEMA)
-    pq.write_table(table, file_path, compression="zstd")
-
-    row_count = len(df)
-    del df, table
-    gc.collect()
-
-    return row_count
+    # Keep sym_root temporarily so we can sort and group
+    df = df[["timestamp", "price", "size", "exchange", "sym_root"]]
+    
+    # Deduplicate and sort chronologically for the day
+    df = df.drop_duplicates(subset=["timestamp", "price", "size", "sym_root"], keep="first")
+    df = df.sort_values(["sym_root", "timestamp"]).reset_index(drop=True)
+    
+    return df
 
 
 def run_collection():
-    log("====== WRDS TAQ TRAINING DATA COLLECTOR ======")
+    log("====== WRDS TAQ DIRECT-TO-DISK COLLECTOR ======")
     log(f"Range: {START_DATE.date()} -> {END_DATE.date()}")
     
     universe = load_universe()
     log(f"Universe: {len(universe)} tickers")
 
     trading_days = get_trading_days(START_DATE, END_DATE)
-    log(f"Trading days to process: {len(trading_days)}")
-
     months = {}
     for day in trading_days:
         key = get_month_key(day)
-        if key not in months:
-            months[key] = []
+        if key not in months: months[key] = []
         months[key].append(day)
-
-    log(f"Total months: {len(months)}")
 
     log("[SYSTEM] Connecting to WRDS...")
     db = wrds.Connection(wrds_username=WRDS_USERNAME)
@@ -158,8 +122,17 @@ def run_collection():
     for month_idx, (month_key, days) in enumerate(sorted(months.items()), 1):
         log(f"\n[{month_idx}/{len(months)}] {month_key}: {len(days)} trading days")
 
-        month_buffer = {t: [] for t in universe}
+        # 1. Open direct-to-disk pipelines for every ticker for this month
+        writers = {}
+        for ticker in universe:
+            ticker_dir = f"/Volumes/Vault/quant_data/tick data storage/{ticker}/parquet/training_data"
+            os.makedirs(ticker_dir, exist_ok=True)
+            file_path = os.path.join(ticker_dir, f"{month_key}.parquet")
+            writers[ticker] = pq.ParquetWriter(file_path, STRICT_SCHEMA, compression="zstd")
 
+        month_rows = 0
+
+        # 2. Query, clean, write, and delete day-by-day
         for day_idx, day in enumerate(days):
             date_str = day.strftime("%Y%m%d")
 
@@ -170,42 +143,39 @@ def run_collection():
                 if df.empty:
                     continue
 
+                # Clean the batch immediately to drop string overhead
+                df = clean_daily_batch(df)
+
                 for ticker in batch:
                     ticker_rows = df[df["sym_root"] == ticker]
                     if not ticker_rows.empty:
-                        month_buffer[ticker].append(ticker_rows)
+                        # Drop the sym_root column so it strictly matches the Parquet Schema
+                        ticker_rows = ticker_rows[["timestamp", "price", "size", "exchange"]]
+                        
+                        # Write directly to the SSD
+                        table = pa.Table.from_pandas(ticker_rows, schema=STRICT_SCHEMA)
+                        writers[ticker].write_table(table)
+                        month_rows += len(ticker_rows)
 
+                # Annihilate the dataframe from RAM
                 del df
                 gc.collect()
 
             if (day_idx + 1) % 5 == 0:
-                buffered = sum(len(r) for rows in month_buffer.values() for r in rows)
-                log(f"    Day {day_idx + 1}/{len(days)} | Buffer: {buffered:,} rows")
+                log(f"    Day {day_idx + 1}/{len(days)} | Streaming data to SSD...")
 
-        month_rows = 0
+        # 3. Securely close all files at the end of the month
         for ticker in universe:
-            rows = month_buffer[ticker]
-            if rows:
-                count = flush_month(ticker, month_key, rows)
-                month_rows += count
+            writers[ticker].close()
 
         total_rows += month_rows
         months_completed += 1
 
-        del month_buffer
-        gc.collect()
-
-        log(f"  [FLUSHED] {month_key}: {month_rows:,} rows across {len(universe)} tickers")
+        log(f"  [COMPLETED] {month_key}: {month_rows:,} rows successfully written to disk")
         time.sleep(2)
 
     db.close()
-
-    log(f"\n{'=' * 60}")
-    log(f"COLLECTION COMPLETE")
-    log(f"{'=' * 60}")
-    log(f"Months processed: {months_completed}/{len(months)}")
-    log(f"Total rows collected: {total_rows:,}")
-
+    log(f"\nCOLLECTION COMPLETE | Rows processed: {total_rows:,}")
 
 if __name__ == "__main__":
     run_collection()
