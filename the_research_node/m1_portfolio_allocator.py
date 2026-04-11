@@ -89,30 +89,26 @@ def run_hrp_allocation():
             path = f"/Volumes/Vault/quant_data/tick data storage/{t}/parquet/training_data"
             if not os.path.exists(path): continue
             
-            f# Filter out the massive merged files and WRDS backups to prevent RAM exhaustion
-            files = [os.path.join(path, f) for f in os.listdir(path) 
-                     if f.endswith('.parquet') 
-                     and not f.startswith('._')
-                     and "merged" not in f
-                     and f != "ticks.parquet"
-                     and "wrds" not in f]
+            # Filter out the massive merged files and WRDS backups to prevent RAM exhaustion
+            files = [os.path.join(path, f) for f in os.listdir(path) if f.endswith('.parquet') and not f.startswith('._')]
             
             if not files: continue
             
-            # Load all data to bypass alphabetical sorting mismatches
-            dfs = []
-            for f in files:
+            # Resample each file to daily before accumulating
+            daily_chunks = []
+            for fpath in sorted(files):
                 try:
-                    dfs.append(pd.read_parquet(f, columns=['timestamp', 'price']))
+                    chunk = pd.read_parquet(fpath, columns=['timestamp', 'price'])
+                    if chunk.empty: continue
+                    chunk['timestamp'] = pd.to_datetime(chunk['timestamp'], utc=True)
+                    daily = chunk.set_index('timestamp')['price'].resample('1D').last()
+                    daily_chunks.append(daily)
+                    del chunk  # Free raw ticks immediately
                 except Exception:
                     continue
-                    
-            if not dfs: continue
-            df_t = pd.concat(dfs, ignore_index=True)
-            df_t['timestamp'] = pd.to_datetime(df_t['timestamp'], utc=True)
             
-            # Resample to daily returns for portfolio covariance stability
-            prices[t] = df_t.set_index('timestamp')['price'].resample('1D').last().ffill()
+            if not daily_chunks: continue
+            prices[t] = pd.concat(daily_chunks).sort_index().ffill()
             
         if len(prices) != len(tickers): 
             print(f"  >> [WARNING] Missing data for {name}. Skipping in allocation.")

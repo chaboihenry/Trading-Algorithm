@@ -2,9 +2,8 @@ import os
 import json
 import pandas as pd
 
-def compile_historical_state(lookback_years: int = 3, models_dir: str = "the_models", output_dir: str = "the_execution_node/data"):
+def compile_historical_state(lookback_years: int = 5, models_dir: str = "the_models", output_dir: str = "the_execution_node/data"):
     # Compiles the 5-minute historical state strictly for the active trading universe.
-    # Extracts directly from the M1 Parquet Vault, bypassing API limits.
     
     print(f"\n====== COMPILING {lookback_years}-YEAR HISTORICAL STATE ======")
     
@@ -29,67 +28,53 @@ def compile_historical_state(lookback_years: int = 3, models_dir: str = "the_mod
 
     # 3. Extract and align data from the Parquet Vault
     for ticker in target_tickers:
-        path = f"/Volumes/Vault/quant_data/tick data storage/{t}/parquet/training_data"
+        path = f"/Volumes/Vault/quant_data/tick data storage/{ticker}/parquet/training_data"
         
         if not os.path.exists(path):
             print(f"  -> [WARNING] Vault path missing for {ticker}. Skipping.")
             continue
             
         print(f"  -> Processing {ticker}...")
-        file_dfs = []
         
-        # File-by-file extraction to prevent schema crashes
-        for file in os.listdir(path):
+        # File-by-file resampling to prevent RAM exhaustion
+        resampled_chunks = []
+        for file in sorted(os.listdir(path)):
             if not file.endswith('.parquet') or file.startswith('._'):
                 continue
-                
             if file[:8] < cutoff_str:
                 continue
                 
             file_path = os.path.join(path, file)
             try:
-                df = pd.read_parquet(
-                    file_path, 
-                    columns=['timestamp', 'price'],
-                    filters=[('timestamp', '>=', cutoff_dt)]
-                )
-                if not df.empty:
-                    file_dfs.append(df)
+                chunk = pd.read_parquet(file_path, columns=['timestamp', 'price'])
+                if chunk.empty: continue
+                chunk['timestamp'] = pd.to_datetime(chunk['timestamp'], utc=True)
+                # Resample to 5-min immediately, discard raw ticks
+                bars = chunk.set_index('timestamp')['price'].resample('5min').last()
+                resampled_chunks.append(bars)
+                del chunk
             except Exception:
                 continue
-                
-        if not file_dfs:
-            continue
-            
-        # Concatenate all valid files for this ticker
-        df = pd.concat(file_dfs, ignore_index=True)
-        df['timestamp'] = pd.to_datetime(df['timestamp'], utc=True)
-        df = df.sort_values('timestamp').set_index('timestamp')
         
-        # Resample to strict 5-minute bars
-        resampled_close = df['price'].resample('5min').last()
-        ticker_series[ticker] = resampled_close
+        if not resampled_chunks: continue
+        ticker_series[ticker] = pd.concat(resampled_chunks).sort_index().ffill()
 
     if not ticker_series:
         print("[CRITICAL] No valid data extracted from the vault.")
         return
 
-    # 4. Merge all individual series into a single massive DataFrame
+    # 4. Merge all individual series into a single matrix
     print("\n[SYSTEM] Merging all assets into a unified matrix...")
     master_matrix = pd.DataFrame(ticker_series)
-    
-    # Forward fill missing ticks (crucial for illiquid assets or halted periods)
-    # Then drop any rows at the very beginning that still have NaNs
     master_matrix = master_matrix.ffill().dropna()
 
     # 5. Export to Parquet
     os.makedirs(output_dir, exist_ok=True)
-    output_filename = os.path.join(output_dir, "backtest_5m_3yr.parquet")
+    output_filename = os.path.join(output_dir, "backtest_5m_5yr.parquet")
     
     print(f"[SYSTEM] Compressing and writing to {output_filename}...")
     master_matrix.to_parquet(output_filename, engine='pyarrow', compression='snappy')
     
-    # 6. Calculate file size for diagnostics
     file_size_mb = os.path.getsize(output_filename) / (1024 * 1024)
     
     print("\n====== EXPORT SUCCESS ======")
