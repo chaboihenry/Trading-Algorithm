@@ -90,7 +90,7 @@ if __name__ == "__main__":
     # 1. Load environment variables for the diagnostic run
     load_dotenv()
     API_KEY = os.getenv("ALPACA_API_KEY")
-    SECRET_KEY = os.getenv("ALPACA_SECRET_KEY")
+    SECRET_KEY = os.getenv("ALPACA_API_SECRET")
     BASE_URL = os.getenv("ALPACA_API_BASE_URL", "https://paper-api.alpaca.markets")
 
     if not API_KEY or not SECRET_KEY:
