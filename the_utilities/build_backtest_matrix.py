@@ -57,7 +57,8 @@ def compile_historical_state(lookback_years: int = 5, models_dir: str = "the_mod
                 continue
         
         if not resampled_chunks: continue
-        ticker_series[ticker] = pd.concat(resampled_chunks).sort_index().ffill()
+        series = pd.concat(resampled_chunks).sort_index()
+        ticker_series[ticker] = series[~series.index.duplicated(keep='last')].ffill()
 
     if not ticker_series:
         print("[CRITICAL] No valid data extracted from the vault.")

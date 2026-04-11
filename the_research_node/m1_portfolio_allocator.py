@@ -108,7 +108,8 @@ def run_hrp_allocation():
                     continue
             
             if not daily_chunks: continue
-            prices[t] = pd.concat(daily_chunks).sort_index().ffill()
+            prices[t] = pd.concat(daily_chunks).sort_index()
+            prices[t] = prices[t][~prices[t].index.duplicated(keep='last')].ffill()
             
         if len(prices) != len(tickers): 
             print(f"  >> [WARNING] Missing data for {name}. Skipping in allocation.")
