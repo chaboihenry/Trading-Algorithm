@@ -9,10 +9,9 @@ from sklearn.metrics import (
     confusion_matrix, roc_auc_score
 )
 
-# PEPE: Import everything directly from the trainer so features are identical
+# Import everything directly from the trainer so features are identical
 from the_research_node.m1_xgboost_trainer import (
     construct_m1_dibs,
-    get_offline_microstructure,
     get_daily_vol,
     find_optimal_d,
     apply_triple_barrier
@@ -23,7 +22,7 @@ MODELS_DIR = "the_models"
 
 
 def load_model():
-    """PEPE: Load the active model version from the ledger file"""
+    # Load the active model version from the ledger file
     version_path = os.path.join(MODELS_DIR, "active_model_version.txt")
 
     with open(version_path, "r") as f:
@@ -45,50 +44,61 @@ def load_model():
 
 
 def reconstruct_dataset():
-    """
-    PEPE: Carbon copy of the trainer's data pipeline (Steps 1-8).
-    If this produces different features than training, the diagnosis is invalid.
-    """
+
     with open(UNIVERSE_PATH, "r") as f:
         universe_data = json.load(f)
 
     baskets = universe_data.get("baskets", {})
     all_X, all_y, all_meta = [], [], []
+    total_baskets = len(baskets)
 
-    for name, data in baskets.items():
+    for idx, (name, data) in enumerate(baskets.items(), 1):
         tickers = data["tickers"]
         weights = data["weights"]
         anchor = tickers[0]
 
-        print(f"\n[REBUILD] Processing: {name}")
+        # Progress bar matching the trainer
+        pct = (idx / total_baskets) * 100
+        filled = int(30 * idx // total_baskets)
+        bar = '█' * filled + '-' * (30 - filled)
+        print(f"\n[{idx}/{total_baskets}] {name} |{bar}| {pct:.1f}%")
 
-        # 1. Build Structural DIBs — same function, same threshold
+        # 1. Build Structural DIBs
         dibs = construct_m1_dibs(anchor, threshold=50_000_000)
         if dibs.empty:
             print(f"  >> [SKIP] No DIBs for {anchor}")
             continue
 
-        # 2. Load 1-min bars — safely filtering out massive duplicate files
+        # 2. Load 1-min bars with memory-safe chunk resampling
         prices = {}
         for t in tickers:
             path = f"/Volumes/Vault/quant_data/tick data storage/{t}/parquet/training_data"
             if not os.path.exists(path):
                 continue
-                
-            # Ignore the massive merged/wrds duplicates
-            files = [
-                os.path.join(path, f)
-                for f in os.listdir(path)
+
+            files = sorted([
+                os.path.join(path, f) for f in os.listdir(path)
                 if f.endswith(".parquet") and not f.startswith("._")
-            ]
-            
-            if not files:
-                continue
-            df_t = pd.concat(
-                [pd.read_parquet(f, columns=["timestamp", "price"]) for f in files]
-            )
-            df_t["timestamp"] = pd.to_datetime(df_t["timestamp"], utc=True)
-            prices[t] = df_t.set_index("timestamp")["price"].resample("1min").last().ffill()
+                and f >= "2024_01.parquet"
+            ])
+
+            if not files: continue
+
+            resampled_chunks = []
+            for fpath in files:
+                try:
+                    chunk = pd.read_parquet(fpath, columns=["timestamp", "price"])
+                    if chunk.empty: continue
+                    chunk["timestamp"] = pd.to_datetime(chunk["timestamp"], utc=True)
+                    bars = chunk.set_index("timestamp")["price"].resample("1min").last().ffill().shift(1)
+                    resampled_chunks.append(bars)
+                    del chunk
+                except Exception:
+                    continue
+
+            if not resampled_chunks: continue
+            series = pd.concat(resampled_chunks).sort_index()
+            prices[t] = series[~series.index.duplicated(keep='last')].ffill()
 
         if len(prices) != len(tickers):
             print(f"  >> [SKIP] Missing price data for {name}")
@@ -121,30 +131,17 @@ def reconstruct_dataset():
 
         # 5. Triple barrier labels
         labels = apply_triple_barrier(spread_dibs, events, pt_sl=[1, 2], t1=120)
+        print(f"  >> Primary Signal Win Rate: {(labels['bin'].mean() * 100):.1f}%")
 
-        # 6. Microstructure
-        df_anchor = prices[anchor].to_frame("price")
-        df_anchor["size"] = 100
-        micro = get_offline_microstructure(df_anchor)
-
-        # 7. Feature matrix
+        # 6. Feature matrix
         X = pd.DataFrame(index=labels.index)
         X["frac_diff"] = spread_fd.reindex(labels.index).ffill()
         X["volatility"] = vol.reindex(labels.index).ffill()
         X["signal_strength"] = events["z"]
 
-        if not micro.empty:
-            X["order_flow_imbalance"] = (
-                micro["order_flow_imbalance"].reindex(labels.index).ffill().fillna(0)
-            )
-            X["effective_spread"] = (
-                micro["effective_spread"].reindex(labels.index).ffill().fillna(0)
-            )
-
         valid = X.dropna()
         y = labels["bin"].reindex(valid.index)
 
-        # PEPE: Metadata for per-spread breakdown
         meta = pd.DataFrame(index=valid.index)
         meta["spread_name"] = name
         meta["z_score"] = events["z"].reindex(valid.index)
@@ -156,9 +153,9 @@ def reconstruct_dataset():
 
         print(f"  >> [DONE] {name}: {len(valid)} setups | Win rate: {y.mean()*100:.1f}%")
 
-        # PEPE: Free per-spread data before loading the next one
+        # Free per-spread memory
         del prices, spread_continuous, dibs, spread_dibs
-        del vol, spread_fd, z, events, labels, micro, X, valid, y, meta
+        del vol, spread_fd, z, events, labels, X, valid, y, meta
         gc.collect()
 
     if not all_X:
