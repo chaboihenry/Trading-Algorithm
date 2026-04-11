@@ -20,13 +20,12 @@ SECRET_KEY = os.getenv("ALPACA_SECRET_KEY")
 UNIVERSE_PATH = "the_models/curated_universe.json"
 MODELS_DIR = "the_models"
 
-# --- 1. DIB CONSTRUCTION ENGINE (APPLE SILICON OPTIMIZED) ---
+# --- 1. DIB CONSTRUCTION ENGINE ---
 @jit(nopython=True)
-def sample_imbalance_bars(signed_dv_array, threshold):
-    # Compiles path-dependent loop into raw ARM machine code
+def sample_imbalance_bars_streaming(signed_dv_array, threshold, initial_theta):
     bar_indices = np.empty(len(signed_dv_array), dtype=np.int64)
     count = 0
-    theta = 0.0
+    theta = initial_theta
 
     for i in range(len(signed_dv_array)):
         theta += signed_dv_array[i]
@@ -35,58 +34,62 @@ def sample_imbalance_bars(signed_dv_array, threshold):
             count += 1
             theta = 0.0 # Path-dependent reset
     
-    return bar_indices[:count]
+    return bar_indices[:count], theta
 
 def construct_m1_dibs(ticker: str, threshold: float = 50_000_000):
-    print(f"  >> Constructing Structural DIBs for Anchor Ticker: {ticker}...")
+    print(f"  >> Constructing Streaming DIBs for Anchor Ticker: {ticker}...")
     path = f"/Volumes/Vault/quant_data/tick data storage/{ticker}/parquet/training_data"
     
-    files = [
-        os.path.join(path, f)
-        for f in os.listdir(path)
-        if f.endswith(".parquet") and not f.startswith("._")
-    ]
-    if not files: 
+    # 1. Sort files chronologically and strictly enforce the 2024+ regime
+    try:
+        files = sorted([
+            os.path.join(path, f) for f in os.listdir(path) 
+            if f.endswith('.parquet') and not f.startswith('._') and f >= "2024_01.parquet"
+        ])
+    except FileNotFoundError:
         return pd.DataFrame()
         
-    dfs = []
-    # Slash RAM usage by 60% by strictly loading Jan 2024 to Present
-    cutoff_month = "2024_01" 
+    if not files: return pd.DataFrame()
+    
+    dibs_list = []
+    leftover_theta = 0.0
     
     for f in files:
-        # Check the filename (e.g., '2024_01.parquet') against the cutoff
-        if os.path.basename(f) < cutoff_month:
-            continue
-            
         try:
-            dfs.append(pd.read_parquet(f, columns=['timestamp', 'price', 'size']))
+            df = pd.read_parquet(f, columns=['timestamp', 'price', 'size'])
+            if df.empty: continue
+            
+            df['dollar_volume'] = df['price'] * df['size']
+            
+            # Stable tick direction
+            diff = df['price'].diff()
+            tick_dir = np.sign(diff)
+            tick_dir.iloc[0] = 1.0 # Default first tick
+            df['tick_direction'] = tick_dir.replace(0, np.nan).ffill().fillna(1)
+            
+            df['signed_dollar_volume'] = df['dollar_volume'] * df['tick_direction']
+            signed_dv_np = df['signed_dollar_volume'].values.astype(np.float64)
+            
+            # Pass the running theta balance between monthly files
+            sampled_indices, leftover_theta = sample_imbalance_bars_streaming(
+                signed_dv_np, threshold, leftover_theta
+            )
+            
+            if len(sampled_indices) > 0:
+                chunk_dibs = df.iloc[sampled_indices][['timestamp', 'price']].rename(columns={'price': 'close'})
+                dibs_list.append(chunk_dibs)
+                
+            # Force memory release of the huge raw arrays
+            del df, signed_dv_np, diff, tick_dir
+            
         except Exception:
             continue
             
-    if not dfs: return pd.DataFrame()
+    if not dibs_list: return pd.DataFrame()
     
-    df = pd.concat(dfs, ignore_index=True)
-    df['timestamp'] = pd.to_datetime(df['timestamp'], utc=True)
-    df = df.sort_values('timestamp').reset_index(drop=True)
-
-    df['dollar_volume'] = df['price'] * df['size']
-    df['tick_direction'] = np.sign(df['price'].diff()).replace(0, np.nan).ffill().fillna(1)
-    df['signed_dollar_volume'] = df['dollar_volume'] * df['tick_direction']
-
-    signed_dv_np = df['signed_dollar_volume'].values.astype(np.float64)
-    sampled_indices = sample_imbalance_bars(signed_dv_np, threshold)
-    
-    group_flags = np.zeros(len(df), dtype=np.int32)
-    group_flags[sampled_indices] = 1
-    group_ids = np.cumsum(group_flags)
-    group_ids = np.roll(group_ids, 1)
-    group_ids[0] = 0
-    df['group_id'] = group_ids
-
-    dibs = df.groupby('group_id').agg(
-        timestamp=('timestamp', 'last'),
-        close=('price', 'last')
-    ).set_index('timestamp')
+    # Combine the tiny sampled chunks (Kilobytes of RAM)
+    dibs = pd.concat(dibs_list, ignore_index=True)
+    dibs = dibs.set_index('timestamp')
     
     return dibs
 
@@ -189,19 +192,33 @@ def apply_triple_barrier(prices, events, pt_sl=[2, 1], t1=5):
     return out
 
 # --- 5. PURGED K-FOLD CV (Prevents Data Leakage) ---
-def custom_purged_kfold(times: pd.Series, n_splits: int = 3, embargo_pct: float = 0.01):
+def custom_purged_kfold(times: pd.Series, n_splits: int = 3, embargo_pct: float = 0.01, t1_hours: int = 120):
+    # Purge both sides of the test fold by the barrier horizon 
     indices = np.arange(len(times))
     test_splits = np.array_split(indices, n_splits)
-    embargo_length = int(len(times) * embargo_pct)
+    
+    # Embargo sized to the label horizon, not an arbitrary %
+    embargo_length = max(
+        int(len(times) * embargo_pct),
+        t1_hours  # minimum purge = barrier width
+    )
     
     splits = []
     for test_idx in test_splits:
         test_start = test_idx[0]
-        test_end = test_idx[-1] + embargo_length
+        test_end = test_idx[-1]
+        
+        # Purge before test: any train sample whose barrier window could leak into the test period
+        purge_before = max(0, test_start - embargo_length)
+        
+        # Purge AFTER test: original embargo
+        purge_after = min(len(indices), test_end + embargo_length + 1)
+        
         train_idx = np.concatenate([
-            indices[:max(0, test_start)],
-            indices[min(len(indices), test_end):]
+            indices[:purge_before],
+            indices[purge_after:]
         ])
+        
         splits.append((train_idx, test_idx))
     return splits
 
@@ -219,9 +236,15 @@ def train_meta_labeler():
     
     baskets = universe_data.get("baskets", {})
     all_X, all_y = [], []
+    total_baskets = len(baskets)
 
-    for name, data in baskets.items():
-        print(f"\nProcessing Spread: {name}")
+    for idx, (name, data) in enumerate(baskets.items(), 1):
+        # native terminal progress bar
+        pct = (idx / total_baskets) * 100
+        filled = int(30 * idx // total_baskets)
+        bar = '█' * filled + '-' * (30 - filled)
+        print(f"\n[{idx}/{total_baskets}] {name} |{bar}| {pct:.1f}%")
+        
         tickers = data['tickers']
         weights = data['weights']
         anchor = tickers[0]
@@ -230,15 +253,33 @@ def train_meta_labeler():
         dibs = construct_m1_dibs(anchor, threshold=50_000_000)
         if dibs.empty: continue
             
-        # 2. Load fast 1-min time bars for the whole basket to calculate continuous spread
+        # 2. Stream and instantly resample 1-min bars chronologically
         prices = {}
         for t in tickers:
             path = f"/Volumes/Vault/quant_data/tick data storage/{t}/parquet/training_data"
-            files = [os.path.join(path, f) for f in os.listdir(path) if f.endswith('.parquet') and not f.startswith('._')]
+            try:
+                files = sorted([
+                    os.path.join(path, f) for f in os.listdir(path) 
+                    if f.endswith('.parquet') and not f.startswith('._') and f >= "2024_01.parquet"
+                ])
+            except FileNotFoundError:
+                continue
+                
             if not files: continue
-            df_t = pd.concat([pd.read_parquet(f, columns=['timestamp', 'price']) for f in files])
-            df_t['timestamp'] = pd.to_datetime(df_t['timestamp'], utc=True)
-            prices[t] = df_t.set_index('timestamp')['price'].resample('1min').last().ffill()
+            
+            chunk_resampled = []
+            for f in files:
+                try:
+                    df_t = pd.read_parquet(f, columns=['timestamp', 'price'])
+                    if df_t.empty: continue
+                    # Add .shift(1) to prevent the Pandas right-edge lookahead bias
+                    df_t = df_t.set_index('timestamp')['price'].resample('1min').last().ffill().shift(1)
+                    chunk_resampled.append(df_t)
+                except Exception:
+                    continue
+                    
+            if chunk_resampled:
+                prices[t] = pd.concat(chunk_resampled)
 
         if len(prices) != len(tickers): continue
         
@@ -269,22 +310,11 @@ def train_meta_labeler():
         labels = apply_triple_barrier(spread_dibs, events, pt_sl=[1, 2], t1=120)
         print(f"  >> Primary Signal Win Rate: {(labels['bin'].mean() * 100):.1f}%")
         
-        # 7. Offline Microstructure Features (Instant calculation)
-        print(f"  >> Calculating Local Microstructure Dynamics...")
-        # Pass the anchor ticker's local price DataFrame
-        df_anchor = prices[anchor].to_frame('price')
-        df_anchor['size'] = 100 # Mocking size proxy for aggregated time bars
-        micro = get_offline_microstructure(df_anchor)
-        
-        # 8. Assemble Feature Space Matrix
+        # 7. Assemble Feature Space Matrix
         X = pd.DataFrame(index=labels.index)
         X['frac_diff'] = spread_fd.reindex(labels.index).ffill()
         X['volatility'] = vol.reindex(labels.index).ffill()
         X['signal_strength'] = events['z']
-        
-        if not micro.empty:
-            X['order_flow_imbalance'] = micro['order_flow_imbalance'].reindex(labels.index).ffill().fillna(0)
-            X['effective_spread'] = micro['effective_spread'].reindex(labels.index).ffill().fillna(0)
             
         # SPACE FOR FUTURE FEATURES: (e.g., Options Implied Vol, NLP Sentiment)
         # X['future_feature_1'] = ...
@@ -344,13 +374,13 @@ def train_meta_labeler():
     print(f"[SAVED] {model_name} securely exported to {MODELS_DIR}/")
     
     # Dynamically extract the features directly from the XGBoost memory
-    used_features = best_model.feature_names
-    feature_str = ", ".join(used_features) if used_features else "Unknown"
+    used_features = best_model.feature_names_in_
+    feature_str = ", ".join(used_features) if used_features is not None and len(used_features) > 0 else "Unknown"
     
     version_file = os.path.join(MODELS_DIR, "active_model_version.txt")
-    
-    # 'a' mode appends the new model to the bottom of the ledger automatically
-    with open(version_file, "a") as f:
+
+    # Overwrite with only the current active model
+    with open(version_file, "w") as f:
         f.write(f"Model: {model_name} | ROC-AUC: {roc_score:.4f} | Features: [{feature_str}]\n")
 
 if __name__ == "__main__":
