@@ -162,7 +162,7 @@ class VectorizedBacktester:
                 dmatrix = xgb.DMatrix(features)
                 win_probs_array = self.meta_labeler.predict(dmatrix)
 
-                # FIX 5: Build aligned Series so Kelly sizing uses correct probs
+                # Build aligned Series so Kelly sizing uses correct probs
                 win_probs = pd.Series(win_probs_array, index=valid_idx)
 
                 meta_mask = win_probs > self.AI_THRESH
@@ -203,7 +203,7 @@ class VectorizedBacktester:
                         entry_idx = i
                         current_vol = vol.iloc[i] if vol.iloc[i] > 0 else 0.005
 
-                        # FIX 6: Half-Kelly with properly aligned probabilities
+                        # Half-Kelly with properly aligned probabilities
                         if self.meta_labeler is not None and df.index[i] in win_probs.index:
                             prob = win_probs.loc[df.index[i]]
                             kelly_fraction = prob - ((1.0 - prob) / 1.5)
@@ -266,7 +266,7 @@ class VectorizedBacktester:
         fig = plt.figure(figsize=(14, 10))
         gs = GridSpec(3, 1, height_ratios=[2, 1, 1])
 
-        # FIX 7: Consistent WARMUP_BARS in both simulation and plotting
+        # Build aligned Series so Kelly sizing uses correct probs
         active_portfolio = portfolio_returns.iloc[self.WARMUP_BARS:]
         active_spy = spy_data.reindex(active_portfolio.index).ffill()
 

@@ -7,7 +7,7 @@ from alpaca_trade_api.stream import Stream
 
 class LiveStreamer:
     # Asynchronous WebSocket streamer.
-    #Maintains a rolling live matrix of prices for the active curated universe.
+    # Maintains a rolling live matrix of prices for the active curated universe.
     def __init__(self, api_key: str, secret_key: str, base_url: str, models_dir: str = "the_models"):
         self.api_key = api_key
         self.secret_key = secret_key
@@ -91,7 +91,7 @@ if __name__ == "__main__":
     load_dotenv()
     API_KEY = os.getenv("ALPACA_API_KEY")
     SECRET_KEY = os.getenv("ALPACA_API_SECRET")
-    BASE_URL = os.getenv("ALPACA_API_BASE_URL", "https://paper-api.alpaca.markets")
+    BASE_URL = os.getenv("ALPACA_API_BASE_URL", "https://paper-api.alpaca.markets/v2")
 
     if not API_KEY or not SECRET_KEY:
         print("[CRITICAL] Alpaca API keys not found in .env file.")

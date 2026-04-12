@@ -142,7 +142,7 @@ def run_hrp_allocation():
             baskets[name]['capital_allocation'] = 1.0 / len(baskets)
     else:
         cov, corr = returns_df.cov(), returns_df.corr()
-        print(f"  >> Calculating HRP allocation for {len(returns_df.columns)} active strategies...")
+        print(f"Calculating HRP allocation for {len(returns_df.columns)} active strategies...")
 
         # 3. Apply Hierarchical Risk Parity
         dist = correl_dist(corr)
@@ -159,7 +159,7 @@ def run_hrp_allocation():
         for name in baskets:
             if name in hrp_weights:
                 baskets[name]['capital_allocation'] = round(float(hrp_weights[name]), 4)
-                print(f"  >> {name}: {baskets[name]['capital_allocation'] * 100:.2f}%")
+                print(f"{name}: {baskets[name]['capital_allocation'] * 100:.2f}%")
             else:
                 baskets[name]['capital_allocation'] = 0.0
 

@@ -29,8 +29,7 @@ class OrderRouter:
             print(f"[WARNING] Could not fetch positions: {e}")
             return set()
 
-    def execute_spread(self, spread_name: str, signal_data: dict,
-                       live_matrix: pd.DataFrame, open_spreads: set):
+    def execute_spread(self, spread_name: str, signal_data: dict, live_matrix: pd.DataFrame, open_spreads: set):
         # Routes a cointegrated basket trade with proper hedge ratio sizing
         # Returns True if all legs executed successfully
 

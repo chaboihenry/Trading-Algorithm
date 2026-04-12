@@ -4,14 +4,9 @@ import glob
 import pandas as pd
 import numpy as np
 import xgboost as xgb
-from datetime import datetime, timedelta, timezone
-from dotenv import load_dotenv
 from numba import jit
 from statsmodels.tsa.stattools import adfuller
 from sklearn.model_selection import RandomizedSearchCV
-from sklearn.metrics import roc_auc_score
-from alpaca.data.historical import StockHistoricalDataClient
-from alpaca.data.requests import StockQuotesRequest
 
 # --- CONFIGURATION & ENV ---
 load_dotenv()
@@ -37,7 +32,7 @@ def sample_imbalance_bars_streaming(signed_dv_array, threshold, initial_theta):
     return bar_indices[:count], theta
 
 def construct_m1_dibs(ticker: str, threshold: float = 50_000_000):
-    print(f"  >> Constructing Streaming DIBs for Anchor Ticker: {ticker}...")
+    print(f"Constructing Streaming DIBs for Anchor Ticker: {ticker}...")
     path = f"/Volumes/Vault/quant_data/tick data storage/{ticker}/parquet/training_data"
     
     # 1. Sort files chronologically and strictly enforce the 2024+ regime
@@ -93,34 +88,7 @@ def construct_m1_dibs(ticker: str, threshold: float = 50_000_000):
     
     return dibs
 
-# --- 2. MICROSTRUCTURE ENGINE (OFFLINE LOCAL COMPUTE) ---
-def get_offline_microstructure(df_trades):
-    # Calculates order flow and liquidity proxies directly from your SSD Vault trades
-    # bypassing the extremely slow Alpaca Quotes API.
-    try:
-        df = df_trades.copy()
-        
-        # 1. Order Flow Imbalance (OFI proxy via trades)
-        df['price_change'] = df['price'].diff()
-        df['tick_dir'] = np.sign(df['price_change']).replace(0, np.nan).ffill().fillna(1)
-        df['signed_vol'] = df['size'] * df['tick_dir']
-        
-        # 2. Roll's Measure (Effective Spread Proxy)
-        # Roll's model states that the spread is related to the serial covariance of price changes
-        covar = df['price_change'].rolling(30).cov(df['price_change'].shift(1))
-        df['roll_measure'] = 2 * np.sqrt(np.abs(covar))
-        
-        # Resample to match the structural timeframe
-        micro = pd.DataFrame()
-        micro['order_flow_imbalance'] = df['signed_vol'].rolling(50).sum()
-        micro['effective_spread'] = df['roll_measure']
-        
-        return micro.dropna()
-    except Exception as e:
-        print(f"  >> [WARNING] Offline Microstructure failed: {e}")
-        return pd.DataFrame()
-
-# --- 3. FRACTIONAL DIFFERENTIATION (Memory Preservation Engine) ---
+# --- 2. FRACTIONAL DIFFERENTIATION (Memory Preservation Engine) ---
 def get_weights_ffd(d: float, threshold: float = 1e-4):
     w = [1.0]
     k = 1
@@ -152,7 +120,7 @@ def find_optimal_d(series):
             continue
     return 1.0, series.diff().dropna()
 
-# --- 4. TRIPLE BARRIER LABELING ENGINE ---
+# --- 3. TRIPLE BARRIER LABELING ENGINE ---
 def get_daily_vol(close, span0=100):
     # Enforce strictly unique indices to prevent alignment crashes
     close = close[~close.index.duplicated(keep='last')]
@@ -191,7 +159,7 @@ def apply_triple_barrier(prices, events, pt_sl=[2, 1], t1=5):
         else: out.at[loc, 'bin'] = 0                # Time-Out 
     return out
 
-# --- 5. PURGED K-FOLD CV (Prevents Data Leakage) ---
+# --- 4. PURGED K-FOLD CV (Prevents Data Leakage) ---
 def custom_purged_kfold(times: pd.Series, n_splits: int = 3, embargo_pct: float = 0.01, t1_hours: int = 120):
     # Purge both sides of the test fold by the barrier horizon 
     indices = np.arange(len(times))
@@ -222,7 +190,7 @@ def custom_purged_kfold(times: pd.Series, n_splits: int = 3, embargo_pct: float 
         splits.append((train_idx, test_idx))
     return splits
 
-# --- 6. MAIN META-LABELER PIPELINE ---
+# --- 5. MAIN META-LABELER PIPELINE ---
 def train_meta_labeler():
     print("\n=== ASYNC COMPUTE NODE: XGBOOST META-LABELER ===")
     os.makedirs(MODELS_DIR, exist_ok=True)
@@ -337,7 +305,7 @@ def train_meta_labeler():
     imbalance_ratio = float(num_neg) / num_pos if num_pos > 0 else 1.0
     print(f"  >> Auto-Balancing Weights (Ratio: {imbalance_ratio:.2f})")
     
-    # 9. Hyperparameter Tuning with Purged CV
+    # 8. Hyperparameter Tuning with Purged CV
     base_model = xgb.XGBClassifier(
         objective='binary:logistic',
         tree_method='hist',
@@ -364,7 +332,7 @@ def train_meta_labeler():
     if roc_score < 0.55:
         print("  -> NOTE: ROC-AUC is relatively low. The model needs more historical data or additional alpha features (e.g., Order Flow Imbalance).")
 
-    # 10. Versioning & Export
+    # 9. Versioning & Export
     v_files = glob.glob(os.path.join(MODELS_DIR, "meta_labeler_v*.json"))
     version = len(v_files) + 1
     model_name = f"meta_labeler_v{version}.json"
