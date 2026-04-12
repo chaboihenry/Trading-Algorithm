@@ -191,11 +191,11 @@ if __name__ == "__main__":
     try:
         equity, bp = router.get_account_metrics()
         print(f"[SUCCESS] Connected to Alpaca.")
-        print(f"  -> Account Equity: ${equity:.2f}")
-        print(f"  -> Buying Power:   ${bp:.2f}")
+        print(f"Account Equity: ${equity:.2f}")
+        print(f"Buying Power:   ${bp:.2f}")
 
         positions = router.get_open_positions()
-        print(f"  -> Open Positions: {positions if positions else 'None'}")
+        print(f"Open Positions: {positions if positions else 'None'}")
 
         # Diagnostic: submit a safe out-of-the-money limit order
         print("\n[SYSTEM] Testing LONG mechanics (Buy 1 AAPL @ $1.00 Limit)...")

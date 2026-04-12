@@ -9,9 +9,6 @@ from statsmodels.tsa.stattools import adfuller
 from sklearn.model_selection import RandomizedSearchCV
 
 # --- CONFIGURATION & ENV ---
-load_dotenv()
-API_KEY = os.getenv("ALPACA_API_KEY")
-SECRET_KEY = os.getenv("ALPACA_SECRET_KEY")
 UNIVERSE_PATH = "the_models/curated_universe.json"
 MODELS_DIR = "the_models"
 

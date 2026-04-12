@@ -5,41 +5,18 @@ import numpy as np
 from sklearn.decomposition import PCA
 from sklearn.cluster import DBSCAN
 from sklearn.preprocessing import StandardScaler
-from statsmodels.tsa.vector_ar.vecm import coint_johansen
-import statsmodels.api as sm
 import warnings
+
+from the_research_node.m1_cluster_discovery import test_cointegration
 
 warnings.filterwarnings('ignore')
 
-def test_cointegration(aligned_data: pd.DataFrame, tickers: list):
-    # Standard Johansen Cointegration Test
-    if len(aligned_data) < 156: 
-        return False, None, None
-
-    res = coint_johansen(aligned_data, det_order=0, k_ar_diff=1)
-    trace_stat = res.lr1[0]
-    crit_95 = res.cvt[0, 1]
-   
-    if trace_stat > crit_95:
-        eigenvector = res.evec[:, 0]
-        weights = dict(zip(tickers, eigenvector / eigenvector[0]))
-       
-        spread = aligned_data.dot(eigenvector)
-        spread_lag = spread.shift(1).dropna()
-        spread_diff = spread.diff().dropna()
-        ols = sm.OLS(spread_diff, sm.add_constant(spread_lag.loc[spread_diff.index])).fit()
-       
-        lambda_val = ols.params.iloc[1]
-        half_life = -np.log(2) / lambda_val if lambda_val < 0 else np.inf
-        return True, (half_life / 78), weights
-       
-    return False, None, None
 
 def build_structural_history():
-    data_path = 'the_execution_node/data/backtest_5m_3yr.parquet'
-    output_path = 'the_models/structural_lifecycle_3yr.json'
-    
-    print(f"[SYSTEM] Loading massive 3-year history from {data_path}...")
+    data_path = 'the_execution_node/data/backtest_5m_5yr.parquet'
+    output_path = 'the_models/structural_lifecycle_5yr.json'
+
+    print(f"[SYSTEM] Loading 5-year history from {data_path}...")
     try:
         df_5m = pd.read_parquet(data_path)
         if not isinstance(df_5m.index, pd.DatetimeIndex):
@@ -53,24 +30,28 @@ def build_structural_history():
     print("[SYSTEM] Resampling to daily bars for rapid PCA clustering...")
     df_1d = df_5m.resample('1D').last().dropna(how='all')
 
-    # Define the walk-forward parameters (90-day lookback, sliding forward 30 days at a time)
+    # Walk-forward parameters (90-day lookback, sliding forward 30 days at a time)
     WINDOW_DAYS = 90
     STEP_DAYS = 30
-    
-    start_dates = pd.date_range(start=df_1d.index[0], end=df_1d.index[-1] - pd.Timedelta(days=WINDOW_DAYS), freq=f'{STEP_DAYS}D')
+
+    start_dates = pd.date_range(
+        start=df_1d.index[0],
+        end=df_1d.index[-1] - pd.Timedelta(days=WINDOW_DAYS),
+        freq=f'{STEP_DAYS}D'
+    )
 
     ledger = {}
     total_steps = len(start_dates)
 
     for idx, start_dt in enumerate(start_dates):
         end_dt = start_dt + pd.Timedelta(days=WINDOW_DAYS)
-        print(f"\n--- Computing Walk-Forward Window {idx+1}/{total_steps} [{start_dt.date()} to {end_dt.date()}] ---")
+        print(f"\n--- Walk-Forward Window {idx+1}/{total_steps} [{start_dt.date()} to {end_dt.date()}] ---")
 
         # Slice the 90-day window
         slice_1d = df_1d.loc[start_dt:end_dt].dropna(axis=1)
         slice_5m = df_5m.loc[start_dt:end_dt]
 
-        if slice_1d.empty or slice_5m.empty: 
+        if slice_1d.empty or slice_5m.empty:
             continue
 
         # 1. Clustering Phase
@@ -84,10 +65,11 @@ def build_structural_history():
 
         active_in_window = set()
 
-        # 2. Cointegration Phase
+        # 2. Cointegration Phase — uses the canonical Johansen test from m1_cluster_discovery
         for _, cluster_tickers in groups.items():
             aligned = slice_5m[cluster_tickers].dropna()
-            if aligned.empty: continue
+            if aligned.empty:
+                continue
 
             is_coint, hl_days, weights = test_cointegration(aligned, cluster_tickers)
 
@@ -102,8 +84,8 @@ def build_structural_history():
                     }
 
                 lifecycle = ledger[spread_name]["lifecycle"]
-                
-                # If this is a new discovery, OR the spread broke in the past and has now re-cointegrated
+
+                # New discovery, or the spread broke and has now re-cointegrated
                 if not lifecycle or pd.to_datetime(lifecycle[-1]["end"]) < start_dt:
                     lifecycle.append({
                         "start": start_dt.isoformat(),
@@ -112,20 +94,20 @@ def build_structural_history():
                         "half_life": hl_days
                     })
                 else:
-                    # The spread survived the window step! Extend its life expectancy.
+                    # Spread survived — extend its life expectancy
                     lifecycle[-1]["end"] = end_dt.isoformat()
-                    # Continuously update the physics to the most recent robust state
                     lifecycle[-1]["weights"] = weights
                     lifecycle[-1]["half_life"] = hl_days
 
-        print(f"  >> Validated {len(active_in_window)} structurally sound baskets.")
+        print(f"Validated {len(active_in_window)} structurally sound baskets.")
 
-    # 3. Export the 3-Year Master Ledger
+    # 3. Export the 5-Year Master Ledger
     os.makedirs('the_models', exist_ok=True)
     with open(output_path, 'w') as f:
         json.dump(ledger, f, indent=4)
-        
-    print(f"\n[SUCCESS] Walk-Forward Complete. {len(ledger)} historical lifecycles mapped and saved to {output_path}.")
+
+    print(f"\n[SUCCESS] Walk-Forward Complete. {len(ledger)} historical lifecycles saved to {output_path}.")
+
 
 if __name__ == "__main__":
     build_structural_history()
