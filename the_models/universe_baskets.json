@@ -1,5 +1,15 @@
 {
-    "timestamp": "2026-04-13T20:39:28.365679+00:00",
+    "historical_basket_names": [
+        "ABBV_AMGN_CVS_Spread",
+        "BAC_JPM_Spread",
+        "BLK_XLY_Spread",
+        "C_GS_MS_Spread",
+        "COST_WMT_Spread",
+        "DUK_JNJ_KO_PEP_SO_Spread",
+        "HD_HON_LOW_Spread",
+        "HYG_TLT_Spread",
+        "LLY_MA_V_Spread"
+    ],
     "baskets": {
         "ABBV_AMGN_CVS_Spread": {
             "tickers": [
@@ -13,8 +23,7 @@
                 "CVS": -0.017064282161910492
             },
             "half_life": 1.6393189112901485,
-            "last_seen": "2026-04-13T20:39:28.365679+00:00",
-            "capital_allocation": 0.052
+            "last_seen": "2026-04-13T20:39:28.365679+00:00"
         },
         "BAC_JPM_Spread": {
             "tickers": [
@@ -26,8 +35,7 @@
                 "JPM": -0.2094237430386069
             },
             "half_life": 1.5041798341928525,
-            "last_seen": "2026-04-13T20:39:28.365679+00:00",
-            "capital_allocation": 0.0001
+            "last_seen": "2026-04-13T20:39:28.365679+00:00"
         },
         "BLK_XLY_Spread": {
             "tickers": [
@@ -39,8 +47,7 @@
                 "XLY": -16.708308207139872
             },
             "half_life": 0.046041205621804915,
-            "last_seen": "2026-04-13T20:39:28.365679+00:00",
-            "capital_allocation": 0.0301
+            "last_seen": "2026-04-13T20:39:28.365679+00:00"
         },
         "C_GS_MS_Spread": {
             "tickers": [
@@ -54,8 +61,7 @@
                 "MS": 15.94812890084197
             },
             "half_life": 0.5748795450678974,
-            "last_seen": "2026-04-13T20:39:28.365679+00:00",
-            "capital_allocation": 0.0113
+            "last_seen": "2026-04-13T20:39:28.365679+00:00"
         },
         "COST_WMT_Spread": {
             "tickers": [
@@ -67,8 +73,7 @@
                 "WMT": -2.838649504117443
             },
             "half_life": 4.17644947884562,
-            "last_seen": "2026-04-13T20:39:28.365679+00:00",
-            "capital_allocation": 0.0001
+            "last_seen": "2026-04-13T20:39:28.365679+00:00"
         },
         "DUK_JNJ_KO_PEP_SO_Spread": {
             "tickers": [
@@ -86,8 +91,7 @@
                 "SO": -0.6166342945978986
             },
             "half_life": 0.129437239000079,
-            "last_seen": "2026-04-13T20:39:28.365679+00:00",
-            "capital_allocation": 0.0228
+            "last_seen": "2026-04-13T20:39:28.365679+00:00"
         },
         "HD_HON_LOW_Spread": {
             "tickers": [
@@ -101,8 +105,7 @@
                 "LOW": -0.9286519747629455
             },
             "half_life": 0.21524028496034575,
-            "last_seen": "2026-04-13T20:39:28.365679+00:00",
-            "capital_allocation": 0.059
+            "last_seen": "2026-04-13T20:39:28.365679+00:00"
         },
         "HYG_TLT_Spread": {
             "tickers": [
@@ -114,8 +117,7 @@
                 "TLT": -0.007806411363554998
             },
             "half_life": 0.9662289815926522,
-            "last_seen": "2026-04-13T20:39:28.365679+00:00",
-            "capital_allocation": 0.8011
+            "last_seen": "2026-04-13T20:39:28.365679+00:00"
         },
         "LLY_MA_V_Spread": {
             "tickers": [
@@ -129,35 +131,7 @@
                 "V": -50.23534877580503
             },
             "half_life": 0.23812802656520218,
-            "last_seen": "2026-04-13T20:39:28.365679+00:00",
-            "capital_allocation": 0.0234
+            "last_seen": "2026-04-13T20:39:28.365679+00:00"
         }
-    },
-    "flat_list": [
-        "GS",
-        "JNJ",
-        "WMT",
-        "LLY",
-        "BAC",
-        "LOW",
-        "DUK",
-        "HD",
-        "BLK",
-        "KO",
-        "CVS",
-        "V",
-        "HYG",
-        "C",
-        "TLT",
-        "PEP",
-        "JPM",
-        "XLY",
-        "SO",
-        "COST",
-        "ABBV",
-        "MS",
-        "HON",
-        "AMGN",
-        "MA"
-    ]
+    }
 }
