@@ -72,6 +72,25 @@ class OrderRouter:
         total_legs = len(weights)
         held_tickers = self.get_open_positions()
 
+        # Pre-check: verify at least 1 share of every leg is affordable
+        # Prevents log spam from spreads with high share prices and low allocation
+        for ticker, weight in weights.items():
+            if ticker not in live_matrix.columns or live_matrix.empty:
+                print(f"[ROUTER] Blocked {spread_name}: no live price for {ticker}.")
+                return False
+
+            price = live_matrix[ticker].iloc[-1]
+            if pd.isna(price) or price <= 0:
+                continue
+
+            weight_fraction = abs(weight) / abs_weight_sum
+            leg_capital = spread_capital * weight_fraction
+
+            if leg_capital < price:
+                print(f"[ROUTER] Blocked {spread_name}: "
+                      f"allocation ${spread_capital:.0f} can't buy 1 share of {ticker} (${price:.0f}).")
+                return False
+
         for ticker, weight in weights.items():
             # Skip if ticker is already held in another position to avoid conflicts
             if ticker in held_tickers:
