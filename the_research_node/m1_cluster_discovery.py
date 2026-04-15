@@ -19,7 +19,6 @@ def load_universe_list():
         print("[CRITICAL] universe.txt not found. Create it in the root directory.")
         return []
 
-
 def load_daily_from_vault(tickers: list, lookback_days: int = 365):
     # Load daily bars from the Parquet Vault for PCA/DBSCAN clustering.
     cutoff_dt = pd.Timestamp.now(tz='UTC') - pd.Timedelta(days=lookback_days)
@@ -57,7 +56,6 @@ def load_daily_from_vault(tickers: list, lookback_days: int = 365):
         return pd.DataFrame()
     
     return pd.DataFrame(daily_prices).ffill().dropna()
-
 
 def load_vault_data(cluster_tickers: list, lookback_days: int = 90):
     # Load 5-min bars for cointegration testing with memory-safe chunking
@@ -102,7 +100,6 @@ def load_vault_data(cluster_tickers: list, lookback_days: int = 90):
     aligned = pd.DataFrame(ticker_series).dropna()
     return aligned
 
-
 def test_cointegration(aligned_data: pd.DataFrame, tickers: list):
     # Johansen test to find the mean-reverting spread
     if len(aligned_data) < 156:
@@ -128,7 +125,6 @@ def test_cointegration(aligned_data: pd.DataFrame, tickers: list):
        
     return False, None, None
 
-
 def enforce_websocket_limit(baskets: dict, max_tickers: int = 30):
     # Drop the weakest baskets (longest half-life) until under the limit
     # Shorter half-life = faster mean reversion = stronger signal
@@ -147,7 +143,6 @@ def enforce_websocket_limit(baskets: dict, max_tickers: int = 30):
         baskets.pop(weakest)
         
     return baskets
-
 
 def run_discovery_pipeline():
     universe = load_universe_list()

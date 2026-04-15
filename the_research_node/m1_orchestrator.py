@@ -38,18 +38,20 @@ def run_step(name, command):
         logger.error(f"[{name}] FAILED: {e.stderr.strip()[-300:]}")
         return False
 
-
 def git_push():
-    # Commits and pushes updated models to GitHub for the ASUS to pull
+    # Commits and pushes updated models to GitHub for the EC2 to pull
     logger.info("[GIT PUSH] Committing payload to GitHub...")
     try:
-        subprocess.run(["git", "add", "the_models/"], check=True,
-                       capture_output=True, text=True)
+        subprocess.run(["git", "add", "the_models/", "the_execution_node/data/raw_macro_data.csv"],
+                       check=True, capture_output=True, text=True)
         subprocess.run(
             ["git", "commit", "-m",
              f"AUTO: M1 Payload Update {datetime.now().strftime('%Y-%m-%d %H:%M')}"],
             check=True, capture_output=True, text=True
         )
+        # Pull remote changes first to avoid rejection
+        subprocess.run(["git", "pull", "--rebase", "origin", "main"],
+                       check=True, capture_output=True, text=True)
         subprocess.run(["git", "push", "origin", "main"], check=True,
                        capture_output=True, text=True)
         logger.info("[GIT PUSH] Success.")
@@ -59,7 +61,6 @@ def git_push():
         else:
             logger.warning(f"[GIT PUSH] Failed: {e.stderr.strip()[-200:]}")
 
-
 def run_daily_pipeline():
     # Lightweight — macro CSV update only (~30 seconds)
     logger.info(f"====== DAILY MACRO UPDATE | {datetime.now().strftime('%Y-%m-%d %H:%M')} ======")
@@ -67,7 +68,6 @@ def run_daily_pipeline():
              ["python", "-m", "the_utilities.fetch_macro_data"])
     git_push()
     logger.info("====== DAILY UPDATE COMPLETE ======")
-
 
 def run_research_pipeline():
     # Medium — refreshes clusters and allocations (~30-45 min)
@@ -91,7 +91,6 @@ def run_research_pipeline():
 
     elapsed = (time.time() - start) / 60
     logger.info(f"====== RESEARCH REFRESH COMPLETE ({elapsed:.1f} min) ======")
-
 
 def run_weekly_ml_pipeline():
     # Heavy — full retrain + backtest matrix (~1-3 hours)

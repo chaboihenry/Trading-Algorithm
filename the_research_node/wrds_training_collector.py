@@ -30,7 +30,6 @@ def load_universe():
     with open(UNIVERSE_PATH, "r") as f:
         return [line.strip() for line in f if line.strip()]
 
-
 def get_trading_days(start, end):
     days = []
     current = start
@@ -40,17 +39,14 @@ def get_trading_days(start, end):
         current += timedelta(days=1)
     return days
 
-
 def get_month_key(dt):
     return dt.strftime("%Y_%m")
-
 
 def log(msg):
     print(msg)
     os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
     with open(LOG_FILE, "a") as f:
         f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n")
-
 
 def detect_last_collected_month(universe):
     # Scans the vault to find the most recent month file across all tickers
@@ -86,7 +82,6 @@ def detect_last_collected_month(universe):
     log(f"[SYSTEM] Latest data: {latest_month.strftime('%Y_%m')}. Resuming from {next_month.date()}.")
     return next_month
 
-
 def query_single_day(db, date_str, ticker_batch):
     table_name = f"ctm_{date_str}"
     tickers_sql = ", ".join(f"'{t}'" for t in ticker_batch)
@@ -110,7 +105,6 @@ def query_single_day(db, date_str, ticker_batch):
             log(f"  [ERROR] Query failed for {table_name}: {error_msg}")
             return pd.DataFrame()
 
-
 def clean_daily_batch(df):
     # Cleans and deduplicates the dataframe immediately to free RAM
     df["timestamp"] = pd.to_datetime(
@@ -129,7 +123,6 @@ def clean_daily_batch(df):
     df = df.sort_values(["sym_root", "timestamp"]).reset_index(drop=True)
 
     return df
-
 
 def run_incremental_collection():
     # Detects the last collected month and fetches only new data
@@ -216,7 +209,6 @@ def run_incremental_collection():
 
     db.close()
     log(f"\n[DONE] Incremental collection complete. {total_rows:,} new rows processed.")
-
 
 def run_full_rebuild(start_year: int = 2021):
     # Full collection from scratch — use when vault is empty or corrupted

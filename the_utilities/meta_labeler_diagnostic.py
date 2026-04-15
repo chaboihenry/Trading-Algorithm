@@ -42,7 +42,6 @@ def load_model():
     model.load_model(model_path)
     return model, model_name
 
-
 def reconstruct_dataset():
 
     with open(UNIVERSE_PATH, "r") as f:
@@ -163,7 +162,6 @@ def reconstruct_dataset():
         return pd.DataFrame(), pd.Series(dtype=float), pd.DataFrame()
 
     return pd.concat(all_X), pd.concat(all_y), pd.concat(all_meta)
-
 
 def run_diagnostic():
     print("====== META-LABELER v2 PRECISION vs RECALL AUTOPSY ======\n")
