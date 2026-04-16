@@ -91,6 +91,20 @@ class OrderRouter:
                       f"allocation ${spread_capital:.0f} can't buy 1 share of {ticker} (${price:.0f}).")
                 return False
 
+        # Pre-check: verify every short leg is actually shortable on Alpaca
+        # Prevents partial-fill unhedged exposure from non-shortable assets like SO
+        for ticker, weight in weights.items():
+            trade_direction = target_pos * weight
+            if trade_direction < 0:  # This leg would be a short sale
+                try:
+                    asset = self.api.get_asset(ticker)
+                    if not asset.shortable:
+                        print(f"[ROUTER] Blocked {spread_name}: {ticker} is not shortable.")
+                        return False
+                except Exception as e:
+                    print(f"[ROUTER] Blocked {spread_name}: could not verify {ticker} shortability ({e}).")
+                    return False
+
         for ticker, weight in weights.items():
             # Skip if ticker is already held in another position to avoid conflicts
             if ticker in held_tickers:

@@ -153,7 +153,12 @@ class ExecutionOrchestrator:
                 del self.open_positions[spread_name]
                 self.cooldown_tracker[spread_name] = datetime.now()
                 self._save_position_state()
-                self.logger.info(f"[CLOSED] {spread_name} successfully.")
+                self.logger.info(f"[CLOSED] {spread_name} successfully. Cooldown: {self.COOLDOWN_MINUTES}min")
+            elif reason in ("basket_removed", "missing_legs", "invalid_position"):
+                # Nothing to close in Alpaca — purge the phantom from state
+                del self.open_positions[spread_name]
+                self._save_position_state()
+                self.logger.info(f"[PURGED] {spread_name} removed from state (not held in Alpaca).")
             else:
                 self.logger.warning(f"[WARNING] Failed to close {spread_name}.")
 
