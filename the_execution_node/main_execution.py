@@ -5,7 +5,7 @@ import threading
 import subprocess
 import logging
 from logging.handlers import RotatingFileHandler
-from datetime import datetime
+from datetime import datetime, timedelta
 import pandas as pd
 from dotenv import load_dotenv
 
@@ -25,6 +25,9 @@ class ExecutionOrchestrator:
     # How often to evaluate signals during market hours (seconds)
     EVAL_INTERVAL = 60
 
+    # Minutes to block re-entry after exiting a spread (prevents whipsaw)
+    COOLDOWN_MINUTES = 30
+
     def __init__(self):
         self._setup_logging()
         self.logger.info("Initializing Execution Orchestrator...")
@@ -39,6 +42,9 @@ class ExecutionOrchestrator:
 
         # Position tracking: spread_name -> position metadata from stat_arb_engine
         self.open_positions = {}
+
+        # Cooldwown tracking: spread_name -> cooldown expiry timestamp
+        self.cooldown_tracker = {}
 
         self.streamer = None
 
@@ -103,6 +109,32 @@ class ExecutionOrchestrator:
         now = datetime.now()
         current_minutes = now.hour * 60 + now.minute
         return 585 <= current_minutes <= 945  # 09:45 = 585, 15:45 = 945
+    
+    def _force_eod_liquidation(self):
+        # Force-close all positions at 15:50 ET to avoid overnight gap risk
+        now = datetime.now()
+        current_minutes = now.hour * 60 + now.minute
+
+        # 15:50 = 950 minutes — gives 10 min buffer before 16:00 close
+        if current_minutes < 950:
+            return
+
+        if not self.open_positions:
+            return
+
+        self.logger.info("[EOD] 15:50 ET — Force-liquidating all positions to avoid overnight risk.")
+
+        for spread_name in list(self.open_positions.keys()):
+            pos_data = self.open_positions.get(spread_name, {})
+            weights = pos_data.get('johansen_weights', {})
+
+            if self.router.close_spread(spread_name, weights, "eod_liquidation"):
+                del self.open_positions[spread_name]
+                self.cooldown_tracker[spread_name] = datetime.now()
+                self._save_position_state()
+                self.logger.info(f"[EOD] {spread_name} liquidated.")
+            else:
+                self.logger.warning(f"[EOD] Failed to liquidate {spread_name}.")
 
     def _process_exits(self, matrix: pd.DataFrame):
         # Check all open positions for exit conditions
@@ -119,8 +151,14 @@ class ExecutionOrchestrator:
 
             if self.router.close_spread(spread_name, weights, reason):
                 del self.open_positions[spread_name]
+                self.cooldown_tracker[spread_name] = datetime.now()
                 self._save_position_state()
-                self.logger.info(f"[CLOSED] {spread_name} successfully.")
+                self.logger.info(f"[CLOSED] {spread_name} successfully. Cooldown: {self.COOLDOWN_MINUTES}min")
+            elif reason in ("basket_removed", "missing_legs", "invalid_position"):
+                # Nothing to close in Alpaca — purge the phantom from state
+                del self.open_positions[spread_name]
+                self._save_position_state()
+                self.logger.info(f"[PURGED] {spread_name} removed from state (not held in Alpaca).")
             else:
                 self.logger.warning(f"[WARNING] Failed to close {spread_name}.")
 
@@ -139,6 +177,11 @@ class ExecutionOrchestrator:
         for spread_name, signal_data in signals.items():
             # Skip if already holding this spread
             if spread_name in open_spread_names:
+                continue
+            
+            # Skip if the spread is on cooldown
+            last_exit = self.cooldown_tracker.get(spread_name)
+            if last_exit and (datetime.now() - last_exit) < timedelta(minutes=self.COOLDOWN_MINUTES):
                 continue
 
             target_pos = signal_data['target_position']
@@ -210,13 +253,16 @@ class ExecutionOrchestrator:
                 # 1. Check exits first — free up capital before entering new trades
                 self._process_exits(matrix)
 
-                # 2. Look for new entry signals
+                # 2. Force-close everything near market close
+                self._force_eod_liquidation()
+
+                # 3. Look for new entry signals
                 self._process_entries(matrix)
 
-                # 3. Increment bar counters for time barrier tracking
+                # 4. Increment bar counters for time barrier tracking
                 self._increment_bars_held()
 
-                # 4. Persist state after every cycle
+                # 5. Persist state after every cycle
                 self._save_position_state()
 
             except Exception as e:

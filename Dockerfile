@@ -20,5 +20,8 @@ COPY . .
 # Create directory for runtime logs
 RUN mkdir -p /app/logs
 
+# Fix git ownership check for volume-mounted repos
+RUN git config --global --add safe.directory /app
+
 # Launch the 24/7 daemon directly
 CMD ["python", "-m", "the_execution_node.main_execution"]
