@@ -39,27 +39,56 @@ def run_step(name, command):
         return False
 
 def git_push():
-    # Commits and pushes updated models to GitHub for the EC2 to pull
+    # Commits and pushes updated models/macro to GitHub for the EC2 to pull
+    # Each step is independent — one failure doesn't block subsequent steps
     logger.info("[GIT PUSH] Committing payload to GitHub...")
+
+    # Step 1: Stage files
     try:
-        subprocess.run(["git", "add", "the_models/", "the_execution_node/data/raw_macro_data.csv"],
-                       check=True, capture_output=True, text=True)
         subprocess.run(
-            ["git", "commit", "-m",
-             f"AUTO: M1 Payload Update {datetime.now().strftime('%Y-%m-%d %H:%M')}"],
+            ["git", "add", "the_models/", "the_execution_node/data/raw_macro_data.csv"],
             check=True, capture_output=True, text=True
         )
-        # Pull remote changes first to avoid rejection
-        subprocess.run(["git", "pull", "--rebase", "origin", "main"],
-                       check=True, capture_output=True, text=True)
-        subprocess.run(["git", "push", "origin", "main"], check=True,
-                       capture_output=True, text=True)
-        logger.info("[GIT PUSH] Success.")
     except subprocess.CalledProcessError as e:
-        if "nothing to commit" in str(e.stdout) + str(e.stderr):
+        logger.warning(f"[GIT PUSH] Stage failed: {e.stderr.strip()[-200:]}")
+        return
+
+    # Step 2: Commit (non-fatal if nothing to commit)
+    commit_result = subprocess.run(
+        ["git", "commit", "-m", f"AUTO: M1 Payload Update {datetime.now().strftime('%Y-%m-%d %H:%M')}"],
+        capture_output=True, text=True
+    )
+    if commit_result.returncode != 0:
+        combined = (commit_result.stdout + commit_result.stderr).lower()
+        if "nothing to commit" in combined or "no changes added" in combined:
             logger.info("[GIT PUSH] Nothing new to commit.")
         else:
-            logger.warning(f"[GIT PUSH] Failed: {e.stderr.strip()[-200:]}")
+            logger.warning(f"[GIT PUSH] Commit failed: {commit_result.stderr.strip()[-200:]}")
+            return
+        # Even if nothing to commit locally, still pull+push in case remote has stale refs
+
+    # Step 3: Pull remote changes (always run — brings ASUS/EC2 pushes into sync)
+    pull_result = subprocess.run(
+        ["git", "pull", "--rebase", "origin", "main"],
+        capture_output=True, text=True
+    )
+    if pull_result.returncode != 0:
+        logger.warning(f"[GIT PUSH] Pull-rebase failed: {pull_result.stderr.strip()[-200:]}")
+        return
+
+    # Step 4: Push (only if local commits to push)
+    push_result = subprocess.run(
+        ["git", "push", "origin", "main"],
+        capture_output=True, text=True
+    )
+    if push_result.returncode == 0:
+        logger.info("[GIT PUSH] Success.")
+    else:
+        combined = (push_result.stdout + push_result.stderr).lower()
+        if "everything up-to-date" in combined:
+            logger.info("[GIT PUSH] Nothing to push — already in sync.")
+        else:
+            logger.warning(f"[GIT PUSH] Push failed: {push_result.stderr.strip()[-200:]}")
 
 def run_daily_pipeline():
     # Lightweight — macro CSV update only (~30 seconds)
