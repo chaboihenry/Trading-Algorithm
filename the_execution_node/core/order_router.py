@@ -5,7 +5,7 @@ import pandas as pd
 from alpaca_trade_api.rest import REST
 
 # Monte Carlo optimized parameters (must match stat_arb_engine and backtester)
-LEVERAGE = 28.5
+LEVERAGE = 2.0
 
 
 class OrderRouter:

@@ -14,10 +14,10 @@ class VectorizedBacktester:
     # Lifecycle-aware simulation using structural profiler ledger.
 
     # Monte Carlo optimized parameters (must match stat_arb_engine)
-    Z_THRESH = 1.96
-    AI_THRESH = 0.55
-    PT_SKEW = 1.70
-    SL_SKEW = 1.83
+    Z_THRESH = 2.39
+    AI_THRESH = 0.56
+    PT_SKEW = 1.90
+    SL_SKEW = 1.75
     TIME_BARRIER = 120
 
     # Reg-T Pattern Day Trader margin — 2x for longs, 2x for shorts combined
@@ -64,7 +64,7 @@ class VectorizedBacktester:
             print(f"[SUCCESS] Loaded {len(self.ledger)} historical baskets from structural_lifecycle_5yr.json.")
         except FileNotFoundError:
             print("[CRITICAL] structural_lifecycle_5yr.json not found — run m1_structural_profiler first.")
-            exit(1)
+            raise
 
         xgb_path = os.path.join(self.models_dir, "meta_labeler_v3.json")
         try:
@@ -92,7 +92,7 @@ class VectorizedBacktester:
             return df.ffill().dropna()
         except FileNotFoundError:
             print(f"[CRITICAL] Historical data not found at {data_path}.")
-            exit(1)
+            raise
 
     def _apply_cusum_regime_shield(self, target_index, threshold: float = 0.02):
         csv_path = os.path.join(self.data_dir, "raw_macro_data.csv")
@@ -329,7 +329,7 @@ class VectorizedBacktester:
                 if total_notional > available_bp:
                     continue
 
-                # TICKER CONFLICT: don't net positions across spreads
+                # don't net positions across spreads
                 if any(ticker in self.held_tickers for ticker in leg_shares):
                     continue
 
@@ -364,6 +364,133 @@ class VectorizedBacktester:
             spy_data = pd.Series(0.0, index=df.index)
 
         self._plot_results(equity_curve, spy_data)
+
+    def run_simulation_headless(self):
+        # Same as run_simulation but skips plotting and returns metrics only
+        # Used for Monte Carlo optimization where hundreds of configs are run
+        df = self._fetch_historical_data()
+        if df.empty:
+            return 0.0, 0.0, 0
+
+        regime_safe_mask = self._apply_cusum_regime_shield(df.index)
+        spread_metadata = self._precompute_spreads(df)
+
+        active_count_series = pd.Series(0, index=df.index, dtype=int)
+        for meta in spread_metadata.values():
+            mask = (df.index >= meta['window_start']) & (df.index <= meta['window_end'])
+            active_count_series.loc[mask] += 1
+        active_count_series = active_count_series.clip(lower=1)
+
+        positions = {}
+        realized_pnl = pd.Series(0.0, index=df.index)
+        trade_count = 0
+
+        # Reset state in case the instance was reused
+        self.cash = self.STARTING_EQUITY
+        self.held_tickers = {}
+        self.cooldown_until = {}
+
+        for i in range(self.WARMUP_BARS, len(df)):
+            current_prices = df.iloc[i]
+            current_time = df.index[i].time()
+            is_safe_time = (pd.Timestamp("09:45").time() <= current_time <= pd.Timestamp("15:45").time())
+            is_regime_safe = regime_safe_mask.iloc[i] if i < len(regime_safe_mask) else True
+
+            borrow = self._accrue_short_borrow(positions, current_prices)
+            realized_pnl.iloc[i] -= borrow
+
+            # EXIT PASS
+            for key in list(positions.keys()):
+                meta = spread_metadata.get(key)
+                if meta is None:
+                    continue
+                entry_bar = meta['entry_bars'].get(key, i)
+                bars_held = i - entry_bar
+                direction = meta['direction'].get(key, 0)
+                spread_pnl = 0.0
+                spread_cost = 0.0
+                for ticker, (shares, entry_px) in positions[key].items():
+                    px_now = current_prices.get(ticker, entry_px)
+                    if not pd.isna(px_now):
+                        spread_pnl += shares * (px_now - entry_px)
+                        spread_cost += abs(shares) * entry_px
+                trade_return = spread_pnl / spread_cost if spread_cost > 0 else 0.0
+                current_vol = meta['vol'].get(df.index[i], 0.005)
+                current_z = meta['z_score'].get(df.index[i], 0.0)
+                hit_pt = trade_return >= (current_vol * self.PT_SKEW)
+                hit_sl = trade_return <= -(current_vol * self.SL_SKEW)
+                hit_time = bars_held >= self.TIME_BARRIER
+                hit_mr = (direction == 1 and current_z >= 0) or (direction == -1 and current_z <= 0)
+                window_end = meta.get('window_end')
+                hit_window_expiry = (window_end is not None and df.index[i] >= window_end)
+                if hit_pt or hit_sl or hit_time or hit_mr or hit_window_expiry:
+                    realized_pnl.iloc[i] += self._close_spread(key, positions, current_prices, i)
+
+            if current_time >= pd.Timestamp("15:50").time():
+                for key in list(positions.keys()):
+                    realized_pnl.iloc[i] += self._close_spread(key, positions, current_prices, i)
+
+            if not is_safe_time or not is_regime_safe:
+                continue
+
+            for key, meta in spread_metadata.items():
+                if key in positions:
+                    continue
+                underlying_spread = meta['spread_name']
+                if i < self.cooldown_until.get(underlying_spread, 0):
+                    continue
+                if df.index[i] < meta['window_start'] or df.index[i] > meta['window_end']:
+                    continue
+                signal = meta['signals'].get(df.index[i], 0)
+                if signal == 0:
+                    continue
+                dynamic_alloc = 1.0 / active_count_series.iloc[i]
+                signal_data = {
+                    'target_position': int(signal),
+                    'hrp_allocation': dynamic_alloc,
+                    'bet_size': meta['bet_sizes'].get(df.index[i], 0.5),
+                    'johansen_weights': meta['weights'],
+                }
+                unrealized = self._mark_to_market(positions, current_prices)
+                current_equity = self.cash + unrealized
+                leg_shares, total_notional = self._size_legs(signal_data, current_prices, current_equity)
+                if not leg_shares:
+                    continue
+                if any(ticker in self.NON_SHORTABLE and shares < 0 for ticker, shares in leg_shares.items()):
+                    continue
+                deployed_notional = sum(
+                    abs(shares) * current_prices.get(ticker, entry_px)
+                    for legs in positions.values()
+                    for ticker, (shares, entry_px) in legs.items()
+                )
+                available_bp = current_equity * self.LEVERAGE - deployed_notional
+                if total_notional > available_bp:
+                    continue
+                if any(ticker in self.held_tickers for ticker in leg_shares):
+                    continue
+                positions[key] = {
+                    ticker: (shares, current_prices[ticker])
+                    for ticker, shares in leg_shares.items()
+                }
+                for ticker, shares in leg_shares.items():
+                    self.held_tickers[ticker] = shares
+                meta['entry_bars'][key] = i
+                meta['direction'][key] = int(signal)
+                entry_cost = sum(
+                    abs(shares) * current_prices[ticker] * (self.SLIPPAGE_BPS / 10000.0)
+                    for ticker, shares in leg_shares.items()
+                )
+                self.cash -= entry_cost
+                realized_pnl.iloc[i] -= entry_cost
+                trade_count += 1
+
+        equity_curve = self.STARTING_EQUITY + realized_pnl.cumsum()
+        total_return_pct = (equity_curve.iloc[-1] / self.STARTING_EQUITY - 1.0) * 100
+        rolling_max = equity_curve.cummax()
+        drawdown_pct = (equity_curve - rolling_max) / rolling_max * 100
+        max_dd_pct = drawdown_pct.min()
+
+        return total_return_pct, max_dd_pct, trade_count
 
     def _precompute_spreads(self, df: pd.DataFrame):
         # Precompute per-lifecycle-window, keyed by "spread_name#window_idx"
@@ -449,47 +576,91 @@ class VectorizedBacktester:
         return spread_metadata
 
     def _plot_results(self, equity_curve: pd.Series, spy_data: pd.Series):
+        # Final deploy chart: agent vs SPY baseline with summary stats
         print("[SYSTEM] Generating tear sheet...")
         plt.style.use('dark_background')
-        fig = plt.figure(figsize=(14, 10))
+        fig = plt.figure(figsize=(16, 10))
         gs = GridSpec(2, 1, height_ratios=[2, 1])
 
         active = equity_curve.iloc[self.WARMUP_BARS:]
         active_spy = spy_data.reindex(active.index).ffill()
 
+        # Normalize both to % return from their first value
         agent_pct = (active / self.STARTING_EQUITY - 1.0) * 100
         spy_pct = (active_spy / active_spy.iloc[0] - 1.0) * 100 if len(active_spy) else pd.Series()
 
         ax1 = fig.add_subplot(gs[0])
-        ax1.plot(agent_pct.index, agent_pct, color='#00ffcc', linewidth=2, label='Stat-Arb Agent')
-        ax1.plot(spy_pct.index, spy_pct, color='#888', linewidth=1, linestyle='--', label='SPY Baseline')
-        ax1.set_title('5-Year Backtest — Stage 5: Lifecycle-Aware', fontsize=14, fontweight='bold')
-        ax1.set_ylabel('Return %')
-        ax1.grid(color='#222', linestyle='--')
-        ax1.legend(loc='upper left')
+        ax1.plot(agent_pct.index, agent_pct, color='#00ffcc', linewidth=2.5,
+                 label=f'Stat-Arb Agent ({self.LEVERAGE}x leverage)')
+        ax1.plot(spy_pct.index, spy_pct, color='#888', linewidth=1.5,
+                 linestyle='--', label='SPY Buy & Hold')
+        ax1.axhline(y=0, color='#444', linewidth=0.8, linestyle=':')
+        ax1.set_title('5-Year Backtest: Stat-Arb Agent vs SPY Baseline',
+                      fontsize=15, fontweight='bold', pad=15)
+        ax1.set_ylabel('Cumulative Return (%)', fontsize=11)
+        ax1.grid(color='#222', linestyle='--', alpha=0.5)
+        ax1.legend(loc='upper left', fontsize=11, framealpha=0.8)
 
+        # Annotate final values
+        agent_final = agent_pct.iloc[-1]
+        spy_final = spy_pct.iloc[-1] if len(spy_pct) else 0.0
+        ax1.annotate(f'Agent: {agent_final:.2f}%',
+                     xy=(agent_pct.index[-1], agent_final),
+                     xytext=(-100, 10), textcoords='offset points',
+                     fontsize=11, color='#00ffcc', fontweight='bold')
+        ax1.annotate(f'SPY: {spy_final:.2f}%',
+                     xy=(spy_pct.index[-1], spy_final),
+                     xytext=(-90, -20), textcoords='offset points',
+                     fontsize=11, color='#aaa')
+
+        # Drawdown panel
         rolling_max = equity_curve.cummax()
         drawdown_pct = (equity_curve - rolling_max) / rolling_max * 100
         active_dd = drawdown_pct.iloc[self.WARMUP_BARS:]
 
+        # SPY drawdown for comparison
+        spy_rolling_max = active_spy.cummax()
+        spy_dd = (active_spy - spy_rolling_max) / spy_rolling_max * 100
+
         ax2 = fig.add_subplot(gs[1], sharex=ax1)
-        ax2.fill_between(active_dd.index, active_dd, 0, color='#ff3366', alpha=0.5)
-        ax2.set_ylabel('Drawdown %')
-        ax2.set_title('Underwater Curve')
-        ax2.grid(color='#222', linestyle='--')
+        ax2.fill_between(active_dd.index, active_dd, 0, color='#00ffcc',
+                         alpha=0.4, label=f'Agent DD (max {active_dd.min():.2f}%)')
+        ax2.fill_between(spy_dd.index, spy_dd, 0, color='#888',
+                         alpha=0.3, label=f'SPY DD (max {spy_dd.min():.2f}%)')
+        ax2.axhline(y=0, color='#444', linewidth=0.8)
+        ax2.set_ylabel('Drawdown (%)', fontsize=11)
+        ax2.set_title('Underwater Curves — Agent vs SPY', fontsize=12)
+        ax2.grid(color='#222', linestyle='--', alpha=0.5)
+        ax2.legend(loc='lower left', fontsize=10, framealpha=0.8)
 
         plt.tight_layout()
-        plt.savefig("backtest_tearsheet_5yr.png", dpi=300, bbox_inches='tight', facecolor=fig.get_facecolor())
+        plt.savefig("backtest_tearsheet_final.png", dpi=300,
+                    bbox_inches='tight', facecolor=fig.get_facecolor())
 
-        total_return = (equity_curve.iloc[-1] / self.STARTING_EQUITY - 1.0) * 100
-        max_dd = drawdown_pct.min()
+        total_return = agent_final
+        max_dd = active_dd.min()
+        romd = abs(total_return / max_dd) if max_dd < 0 else 0.0
+        spy_return = spy_final
+        spy_max_dd = spy_dd.min()
 
-        print("\n====== BACKTEST RESULTS (Stage 5: Lifecycle-Aware) ======")
-        print(f"Starting Equity:  ${self.STARTING_EQUITY:,.2f}")
-        print(f"Ending Equity:    ${equity_curve.iloc[-1]:,.2f}")
-        print(f"Total Return:     {total_return:.2f}%")
-        print(f"Max Drawdown:     {max_dd:.2f}%")
-        print("=" * 58)
+        print("\n" + "=" * 62)
+        print("  FINAL BACKTEST RESULTS — OPTIMIZED PARAMETERS")
+        print("=" * 62)
+        print(f"  Period:              {active.index[0].date()} to {active.index[-1].date()}")
+        print(f"  Starting Equity:     ${self.STARTING_EQUITY:,.2f}")
+        print(f"  Ending Equity:       ${equity_curve.iloc[-1]:,.2f}")
+        print()
+        print(f"  Agent Total Return:  {total_return:.2f}%")
+        print(f"  SPY Total Return:    {spy_return:.2f}%")
+        print()
+        print(f"  Agent Max Drawdown:  {max_dd:.2f}%")
+        print(f"  SPY Max Drawdown:    {spy_max_dd:.2f}%")
+        print()
+        print(f"  Agent RoMD:          {romd:.2f}")
+        print()
+        print(f"  Parameters: Z={self.Z_THRESH} AI={self.AI_THRESH} "
+              f"PT={self.PT_SKEW} SL={self.SL_SKEW} Lev={self.LEVERAGE}x")
+        print("=" * 62)
 
 
 if __name__ == "__main__":
