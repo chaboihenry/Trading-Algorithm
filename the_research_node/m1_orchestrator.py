@@ -5,6 +5,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 from datetime import datetime
 import schedule
+import sys
 
 LOG_DIR = "logs"
 LOG_FILE = os.path.join(LOG_DIR, "orchestrator.log")
@@ -94,7 +95,7 @@ def run_daily_pipeline():
     # Lightweight — macro CSV update only (~30 seconds)
     logger.info(f"====== DAILY MACRO UPDATE | {datetime.now().strftime('%Y-%m-%d %H:%M')} ======")
     run_step("MACRO UPDATE",
-             ["python", "-m", "the_utilities.fetch_macro_data"])
+             [sys.executable, "-m", "the_utilities.fetch_macro_data"])
     git_push()
     logger.info("====== DAILY UPDATE COMPLETE ======")
 
@@ -104,15 +105,15 @@ def run_research_pipeline():
     start = time.time()
 
     run_step("MACRO UPDATE",
-             ["python", "-m", "the_utilities.fetch_macro_data"])
+             [sys.executable, "-m", "the_utilities.fetch_macro_data"])
 
     if not run_step("CLUSTER DISCOVERY",
-                    ["python", "-m", "the_research_node.m1_cluster_discovery"]):
+                    [sys.executable, "-m", "the_research_node.m1_cluster_discovery"]):
         logger.error("Cluster discovery failed. Aborting.")
         return
 
     if not run_step("HRP ALLOCATOR",
-                    ["python", "-m", "the_research_node.m1_portfolio_allocator"]):
+                    [sys.executable, "-m", "the_research_node.m1_portfolio_allocator"]):
         logger.error("HRP allocation failed. Aborting.")
         return
 
@@ -127,26 +128,26 @@ def run_weekly_ml_pipeline():
     start = time.time()
 
     run_step("MACRO UPDATE",
-             ["python", "-m", "the_utilities.fetch_macro_data"])
+             [sys.executable, "-m", "the_utilities.fetch_macro_data"])
 
     run_step("WRDS COLLECTION",
-             ["python", "-m", "the_research_node.wrds_training_collector"])
+             [sys.executable, "-m", "the_research_node.wrds_training_collector"])
 
     if not run_step("CLUSTER DISCOVERY",
-                    ["python", "-m", "the_research_node.m1_cluster_discovery"]):
+                    [sys.executable, "-m", "the_research_node.m1_cluster_discovery"]):
         logger.error("Cluster discovery failed. Aborting.")
         return
 
     if not run_step("HRP ALLOCATOR",
-                    ["python", "-m", "the_research_node.m1_portfolio_allocator"]):
+                    [sys.executable, "-m", "the_research_node.m1_portfolio_allocator"]):
         logger.error("HRP allocation failed. Aborting.")
         return
 
     run_step("BACKTEST MATRIX",
-             ["python", "-m", "the_utilities.build_backtest_matrix"])
+             [sys.executable, "-m", "the_utilities.build_backtest_matrix"])
 
     if not run_step("XGBOOST TRAINER",
-                    ["python", "-m", "the_research_node.m1_xgboost_trainer"]):
+                    [sys.executable, "-m", "the_research_node.m1_xgboost_trainer"]):
         logger.error("XGBoost training failed. Keeping previous model.")
 
     git_push()
