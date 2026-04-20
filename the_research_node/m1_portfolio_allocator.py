@@ -154,8 +154,29 @@ def run_hrp_allocation():
         
         cov = cov.loc[sort_ix, sort_ix]
         hrp_weights = get_rec_bipart(cov, sort_ix)
-        
-        # 4. Inject allocations back into the JSON payload
+
+        # 4. Apply concentration cap — iteratively clamp + renormalize until all weights <= MAX_CAP
+        # This prevents HRP from dumping 86% of capital into a single degenerate spread
+        MAX_CAP = 0.25
+
+        for _ in range(20):  # iterative rebalance, usually converges in 2-3 passes
+            over_cap = hrp_weights[hrp_weights > MAX_CAP]
+            if over_cap.empty:
+                break
+            # Clamp the over-cap weights and redistribute the excess to the under-cap weights
+            excess = (over_cap - MAX_CAP).sum()
+            hrp_weights[hrp_weights > MAX_CAP] = MAX_CAP
+            under_cap_mask = hrp_weights < MAX_CAP
+            if under_cap_mask.sum() == 0:
+                break
+            redistribution = hrp_weights[under_cap_mask] / hrp_weights[under_cap_mask].sum()
+            hrp_weights[under_cap_mask] += excess * redistribution
+
+        # Final normalization to guarantee sum-to-1 (rounding errors can accumulate)
+        hrp_weights = hrp_weights / hrp_weights.sum()
+        print(f"[HRP CAP] Applied {MAX_CAP*100:.0f}% max allocation cap.")
+
+        # 5. Inject allocations back into the JSON payload
         for name in baskets:
             if name in hrp_weights:
                 baskets[name]['capital_allocation'] = round(float(hrp_weights[name]), 4)

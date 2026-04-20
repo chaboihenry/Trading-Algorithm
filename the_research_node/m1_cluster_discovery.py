@@ -9,6 +9,11 @@ from sklearn.preprocessing import StandardScaler
 from statsmodels.tsa.vector_ar.vecm import coint_johansen
 import statsmodels.api as sm
 
+def _append_discovery_ledger(entry: dict, ledger_path: str = "logs/cluster_discovery_ledger.jsonl"):
+    # Append one JSON line per cluster tested. JSONL format (one object per line)
+    os.makedirs(os.path.dirname(ledger_path), exist_ok=True)
+    with open(ledger_path, "a") as f:
+        f.write(json.dumps(entry) + "\n")
 
 def load_universe_list():
     # Decoupled ticker list for scaling
@@ -173,21 +178,59 @@ def run_discovery_pipeline():
     print(f"[SYSTEM] DBSCAN found {len(groups)} clusters. Testing cointegration...")
    
     confirmed_baskets = {}
+    run_timestamp = pd.Timestamp.now(tz='UTC').isoformat()
 
     for _, cluster_tickers in groups.items():
         aligned = load_vault_data(cluster_tickers)
-        if aligned.empty: continue
-           
+        if aligned.empty:
+            _append_discovery_ledger({
+                "timestamp": run_timestamp,
+                "tickers": cluster_tickers,
+                "status": "no_vault_data",
+            })
+            continue
+
         is_coint, hl_days, weights = test_cointegration(aligned, cluster_tickers)
 
-        if is_coint and (0.01 <= hl_days <= 15.0):
+        # Build ledger entry — logs every test, accepted or rejected
+        ledger_entry = {
+            "timestamp": run_timestamp,
+            "tickers": cluster_tickers,
+            "is_cointegrated": bool(is_coint),
+            "half_life_days": float(hl_days) if hl_days is not None else None,
+            "weights": weights if weights else None,
+        }
+
+        # Compute hedge ratio sanity metric for the ledger
+        if weights:
+            abs_weights = [abs(w) for w in weights.values()]
+            min_w = min(abs_weights)
+            max_w = max(abs_weights)
+            ledger_entry["min_max_weight_ratio"] = min_w / max_w if max_w > 0 else 0.0
+        else:
+            ledger_entry["min_max_weight_ratio"] = None
+
+        # Determine final status
+        if not is_coint:
+            ledger_entry["status"] = "not_cointegrated"
+        elif not (0.01 <= hl_days <= 15.0):
+            ledger_entry["status"] = f"half_life_out_of_range ({hl_days:.2f}d)"
+        elif ledger_entry["min_max_weight_ratio"] is not None and ledger_entry["min_max_weight_ratio"] < 0.15:
+            ledger_entry["status"] = "degenerate_hedge_ratio"
+            print(f"  >> [DEGENERATE] {'_'.join(cluster_tickers)}: "
+                  f"min/max weight ratio = {ledger_entry['min_max_weight_ratio']:.3f}")
+        else:
             spread_name = "_".join(cluster_tickers) + "_Spread"
             confirmed_baskets[spread_name] = {
-                'tickers': cluster_tickers, 
+                'tickers': cluster_tickers,
                 'weights': weights,
                 'half_life': hl_days
             }
-            print(f"  >> [CONFIRMED] {spread_name} | Half-life: {hl_days:.2f}d")
+            ledger_entry["status"] = "confirmed"
+            print(f"  >> [CONFIRMED] {spread_name} | Half-life: {hl_days:.2f}d | "
+                  f"weight ratio: {ledger_entry['min_max_weight_ratio']:.3f}")
+
+        _append_discovery_ledger(ledger_entry)
             
     print(f"\n[SYSTEM] {len(confirmed_baskets)} cointegrated baskets confirmed.")
             
