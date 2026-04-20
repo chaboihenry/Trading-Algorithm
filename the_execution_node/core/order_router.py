@@ -91,6 +91,27 @@ class OrderRouter:
                       f"allocation ${spread_capital:.0f} can't buy 1 share of {ticker} (${price:.0f}).")
                 return False
 
+        # Pre-check: reject degenerate spreads where one leg barely hedges the other
+        # A "hedge" with <15% of the largest leg's capital is essentially a naked directional bet
+        leg_notionals = []
+        for ticker, weight in weights.items():
+            if ticker not in live_matrix.columns:
+                continue
+            price = live_matrix[ticker].iloc[-1]
+            if pd.isna(price) or price <= 0:
+                continue
+            wt_frac = abs(weight) / abs_weight_sum
+            leg_notionals.append(spread_capital * wt_frac)
+
+        if leg_notionals:
+            min_leg = min(leg_notionals)
+            max_leg = max(leg_notionals)
+            if max_leg > 0 and (min_leg / max_leg) < 0.15:
+                hedge_ratio_pct = 100 * min_leg / max_leg
+                print(f"[ROUTER] Blocked {spread_name}: "
+                      f"degenerate hedge (smallest leg is {hedge_ratio_pct:.1f}% of largest).")
+                return False
+
         # Pre-check: verify every short leg is actually shortable on Alpaca
         # Prevents partial-fill unhedged exposure from non-shortable assets like SO
         for ticker, weight in weights.items():

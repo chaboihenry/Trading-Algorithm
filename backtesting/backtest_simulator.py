@@ -583,7 +583,7 @@ class VectorizedBacktester:
         gs = GridSpec(2, 1, height_ratios=[2, 1])
 
         active = equity_curve.iloc[self.WARMUP_BARS:]
-        active_spy = spy_data.reindex(active.index).ffill()
+        active_spy = spy_data.reindex(active.index).ffill().bfill()
 
         # Normalize both to % return from their first value
         agent_pct = (active / self.STARTING_EQUITY - 1.0) * 100
