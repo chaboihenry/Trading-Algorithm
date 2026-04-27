@@ -43,7 +43,7 @@ class ExecutionOrchestrator:
         # Position tracking: spread_name -> position metadata from stat_arb_engine
         self.open_positions = {}
 
-        # Cooldwown tracking: spread_name -> cooldown expiry timestamp
+        # Cooldown tracking: spread_name -> cooldown expiry timestamp
         self.cooldown_tracker = {}
 
         self.streamer = None
@@ -109,7 +109,7 @@ class ExecutionOrchestrator:
         now = datetime.now()
         current_minutes = now.hour * 60 + now.minute
         return 585 <= current_minutes <= 945  # 09:45 = 585, 15:45 = 945
-    
+
     def _force_eod_liquidation(self):
         # Force-close all positions at 15:50 ET to avoid overnight gap risk
         now = datetime.now()
@@ -128,7 +128,7 @@ class ExecutionOrchestrator:
             pos_data = self.open_positions.get(spread_name, {})
             weights = pos_data.get('johansen_weights', {})
 
-            if self.router.close_spread(spread_name, weights, "eod_liquidation"):
+            if self.router.close_spread(spread_name, weights, "eod_liquidation", position_data=pos_data):
                 del self.open_positions[spread_name]
                 self.cooldown_tracker[spread_name] = datetime.now()
                 self._save_position_state()
@@ -149,7 +149,7 @@ class ExecutionOrchestrator:
 
             self.logger.info(f"[EXIT] {spread_name} | Reason: {reason}")
 
-            if self.router.close_spread(spread_name, weights, reason):
+            if self.router.close_spread(spread_name, weights, reason, position_data=pos_data):
                 del self.open_positions[spread_name]
                 self.cooldown_tracker[spread_name] = datetime.now()
                 self._save_position_state()
@@ -178,7 +178,7 @@ class ExecutionOrchestrator:
             # Skip if already holding this spread
             if spread_name in open_spread_names:
                 continue
-            
+
             # Skip if the spread is on cooldown
             last_exit = self.cooldown_tracker.get(spread_name)
             if last_exit and (datetime.now() - last_exit) < timedelta(minutes=self.COOLDOWN_MINUTES):
@@ -195,16 +195,18 @@ class ExecutionOrchestrator:
                 f"Z={z_score:.2f} | AI={ai_conf:.3f} | Bet={bet_size:.3f}"
             )
 
-            # Route through order router
-            success = self.router.execute_spread(
+            # Route through order router — returns a dict with fill data
+            result = self.router.execute_spread(
                 spread_name, signal_data, matrix, open_spread_names
             )
 
-            if success:
-                # Track the position with all metadata for exit evaluation
+            if result and result.get("success"):
+                # Store the position with all metadata needed for exit logging
                 self.open_positions[spread_name] = signal_data
-                self.open_positions[spread_name]['bars_held'] = 0
-                self.open_positions[spread_name]['entry_time'] = datetime.now().isoformat()
+                self.open_positions[spread_name]['bars_held'] = -1
+                self.open_positions[spread_name]['entry_timestamp'] = datetime.now().isoformat()
+                self.open_positions[spread_name]['entry_prices'] = result.get('entry_prices', {})
+                self.open_positions[spread_name]['leg_shares'] = result.get('leg_shares', {})
                 self._save_position_state()
 
                 self.logger.info(f"[ENTERED] {spread_name} | {action}")

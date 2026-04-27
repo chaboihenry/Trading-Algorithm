@@ -12,6 +12,10 @@ class OrderRouter:
     # Executes trades based on HRP allocations, Half-Kelly sizing,
     # and Johansen hedge ratios. Verifies buying power before routing.
 
+    # Per-leg slippage on market orders (one-way cost in basis points)
+    # Must match the backtester's SLIPPAGE_BPS for analytics consistency
+    SLIPPAGE_BPS = 7.0
+
     def __init__(self, api_key: str, secret_key: str, base_url: str):
         self.api = REST(api_key, secret_key, base_url)
 
@@ -31,12 +35,13 @@ class OrderRouter:
 
     def execute_spread(self, spread_name: str, signal_data: dict, live_matrix: pd.DataFrame, open_spreads: set):
         # Routes a cointegrated basket trade with proper hedge ratio sizing
-        # Returns True if all legs executed successfully
+        # Returns a dict: {"success": bool, "entry_prices": {...}, "leg_shares": {...}}
+        # Entry prices and shares are needed for P&L logging on close
 
         # 1. Block duplicate entries — never stack positions on the same spread
         if spread_name in open_spreads:
             print(f"[ROUTER] Blocked {spread_name}: already holding this spread.")
-            return False
+            return {"success": False}
 
         equity, buying_power = self.get_account_metrics()
 
@@ -47,7 +52,7 @@ class OrderRouter:
 
         if target_pos == 0 or not weights:
             print(f"[WARNING] No actionable signal for {spread_name}.")
-            return False
+            return {"success": False}
 
         # 2. Calculate capital for this spread using HRP allocation and Half-Kelly
         spread_capital = equity * allocation * bet_size * LEVERAGE
@@ -56,7 +61,7 @@ class OrderRouter:
         if spread_capital > buying_power:
             print(f"[SHIELD] Blocked {spread_name}: "
                   f"Required ${spread_capital:.2f}, Available ${buying_power:.2f}")
-            return False
+            return {"success": False}
 
         print(f"\n[ROUTER] Routing {spread_name} | "
               f"Capital: ${spread_capital:.2f} | Bet Size: {bet_size:.3f}")
@@ -66,10 +71,8 @@ class OrderRouter:
         abs_weight_sum = sum(abs(w) for w in weights.values())
         if abs_weight_sum == 0:
             print(f"[WARNING] All weights are zero for {spread_name}.")
-            return False
+            return {"success": False}
 
-        executed_legs = 0
-        total_legs = len(weights)
         held_tickers = self.get_open_positions()
 
         # Pre-check: verify at least 1 share of every leg is affordable
@@ -77,7 +80,7 @@ class OrderRouter:
         for ticker, weight in weights.items():
             if ticker not in live_matrix.columns or live_matrix.empty:
                 print(f"[ROUTER] Blocked {spread_name}: no live price for {ticker}.")
-                return False
+                return {"success": False}
 
             price = live_matrix[ticker].iloc[-1]
             if pd.isna(price) or price <= 0:
@@ -89,7 +92,7 @@ class OrderRouter:
             if leg_capital < price:
                 print(f"[ROUTER] Blocked {spread_name}: "
                       f"allocation ${spread_capital:.0f} can't buy 1 share of {ticker} (${price:.0f}).")
-                return False
+                return {"success": False}
 
         # Pre-check: reject degenerate spreads where one leg barely hedges the other
         # A "hedge" with <15% of the largest leg's capital is essentially a naked directional bet
@@ -110,7 +113,7 @@ class OrderRouter:
                 hedge_ratio_pct = 100 * min_leg / max_leg
                 print(f"[ROUTER] Blocked {spread_name}: "
                       f"degenerate hedge (smallest leg is {hedge_ratio_pct:.1f}% of largest).")
-                return False
+                return {"success": False}
 
         # Pre-check: verify every short leg is actually shortable on Alpaca
         # Prevents partial-fill unhedged exposure from non-shortable assets like SO
@@ -121,10 +124,17 @@ class OrderRouter:
                     asset = self.api.get_asset(ticker)
                     if not asset.shortable:
                         print(f"[ROUTER] Blocked {spread_name}: {ticker} is not shortable.")
-                        return False
+                        return {"success": False}
                 except Exception as e:
                     print(f"[ROUTER] Blocked {spread_name}: could not verify {ticker} shortability ({e}).")
-                    return False
+                    return {"success": False}
+
+        # 4. Execute each leg and track entry prices and shares for P&L logging
+        # Only successfully filled legs are recorded — partial fills won't pollute analytics
+        entry_prices = {}
+        leg_shares = {}
+        executed_legs = 0
+        total_legs = len(weights)
 
         for ticker, weight in weights.items():
             # Skip if ticker is already held in another position to avoid conflicts
@@ -168,31 +178,57 @@ class OrderRouter:
                 notional = qty * price
                 print(f"[EXECUTED] {side.upper()} {qty}x {ticker} "
                       f"@ ~${price:.2f} (${notional:.2f}) | Order: {order.id}")
+
+                # Record entry data for P&L logging at close
+                # Signed shares: positive for long, negative for short
+                signed_qty = qty if side == 'buy' else -qty
+                entry_prices[ticker] = float(price)
+                leg_shares[ticker] = signed_qty
                 executed_legs += 1
             except Exception as e:
                 print(f"[ERROR] Alpaca API rejected {ticker}: {e}")
 
-        # 5. Warn if partial fill — not all legs executed
+        # 5. Validate execution outcome
         if executed_legs == 0:
             print(f"[CRITICAL] No legs executed for {spread_name}. Trade aborted.")
-            return False
+            return {"success": False}
         elif executed_legs < total_legs:
             print(f"[WARNING] Partial execution for {spread_name}: "
                   f"{executed_legs}/{total_legs} legs filled. Hedge is incomplete.")
 
-        return True
+        return {
+            "success": True,
+            "entry_prices": entry_prices,
+            "leg_shares": leg_shares,
+        }
 
-    def close_spread(self, spread_name: str, weights: dict, reason: str):
-        # Closes all legs of a spread by liquidating the held positions
+    def close_spread(self, spread_name: str, weights: dict, reason: str, position_data: dict = None):
+        # Closes all legs and logs the trade to CSV for post-trade analysis
+        # position_data carries entry prices, shares, entry_z, etc., from main_execution state
+        from datetime import datetime
+        from the_utilities.trade_logger import log_trade
+
         print(f"\n[ROUTER] Closing {spread_name} | Reason: {reason}")
 
         held_tickers = self.get_open_positions()
         closed = 0
+        exit_prices = {}
 
+        # Capture exit prices BEFORE closing — close_position is async, so quote it now
         for ticker in weights:
             if ticker not in held_tickers:
                 continue
+            try:
+                quote = self.api.get_latest_trade(ticker)
+                exit_prices[ticker] = float(quote.price)
+            except Exception as e:
+                print(f"[WARNING] Could not fetch exit price for {ticker}: {e}")
+                exit_prices[ticker] = 0.0
 
+        # Submit close orders
+        for ticker in weights:
+            if ticker not in held_tickers:
+                continue
             try:
                 self.api.close_position(ticker)
                 print(f"[CLOSED] {ticker}")
@@ -202,8 +238,55 @@ class OrderRouter:
 
         if closed == 0:
             print(f"[INFO] No positions found to close for {spread_name}.")
+            return False
 
-        return closed > 0
+        # Log trade only if full metadata from caller is available
+        if position_data and "leg_shares" in position_data and "entry_prices" in position_data:
+            entry_prices = position_data["entry_prices"]
+            leg_shares = position_data["leg_shares"]
+
+            gross_pnl = sum(
+                shares * (exit_prices.get(ticker, entry_prices.get(ticker, 0))
+                          - entry_prices.get(ticker, 0))
+                for ticker, shares in leg_shares.items()
+            )
+
+            slippage_cost = sum(
+                abs(shares) * (entry_prices.get(ticker, 0) + exit_prices.get(ticker, 0))
+                * (self.SLIPPAGE_BPS / 10000.0)
+                for ticker, shares in leg_shares.items()
+            )
+
+            net_pnl = gross_pnl - slippage_cost
+            capital_allocated = sum(
+                abs(shares) * entry_prices.get(ticker, 0)
+                for ticker, shares in leg_shares.items()
+            )
+            pnl_pct = (net_pnl / capital_allocated * 100) if capital_allocated > 0 else 0.0
+
+            log_trade({
+                "exit_timestamp": datetime.now().isoformat(),
+                "spread_name": spread_name,
+                "direction": "LONG" if position_data.get("target_position") == 1 else "SHORT",
+                "entry_timestamp": position_data.get("entry_timestamp", ""),
+                "bars_held": position_data.get("bars_held", 0),
+                "exit_reason": reason,
+                "entry_z": round(position_data.get("entry_z", 0.0), 4),
+                "exit_z": round(position_data.get("current_z", 0.0), 4),
+                "ai_confidence": round(position_data.get("ai_confidence", 0.0), 4),
+                "bet_size": round(position_data.get("bet_size", 0.0), 4),
+                "capital_allocated": round(capital_allocated, 2),
+                "tickers": "|".join(leg_shares.keys()),
+                "entry_prices": "|".join(f"{entry_prices.get(t, 0):.4f}" for t in leg_shares),
+                "exit_prices": "|".join(f"{exit_prices.get(t, 0):.4f}" for t in leg_shares),
+                "shares": "|".join(str(s) for s in leg_shares.values()),
+                "gross_pnl": round(gross_pnl, 2),
+                "slippage_cost": round(slippage_cost, 2),
+                "net_pnl": round(net_pnl, 2),
+                "pnl_pct": round(pnl_pct, 4),
+            })
+
+        return True
 
     def cancel_all_open_orders(self):
         # Emergency cleanup — cancels every pending order in the account

@@ -175,15 +175,22 @@ def generate_signals(live_matrix: pd.DataFrame, models_dir: str = "the_models"):
         if ai_prob <= AI_THRESH:
             continue
 
-        # 8. Half-Kelly bet sizing
+        # 8. Bet sizing: half-Kelly base, scaled by z-score conviction
+        # HRP allocates capital by risk (defensive), bet_size scales by opportunity (offensive)
         kelly_fraction = ai_prob - ((1.0 - ai_prob) / 1.5)
-        bet_size = max(0.0, kelly_fraction / 2.0)
+        kelly_bet = max(0.0, kelly_fraction / 2.0)
 
-        # 9. Compute current volatility for barrier sizing
+        z_excess = (abs(current_z) - Z_THRESH) / Z_THRESH
+        z_scale = 1.0 + min(max(z_excess, 0.0), 1.0)  # clamped to [1.0, 2.0]
+
+        bet_size = kelly_bet * z_scale
+
+        # 9. Compute per-bar volatility for barrier sizing
+        # PT/SL thresholds must match the time scale of trade_return (per-bar fractional change)
+        # Annualizing here would inflate thresholds 5-15x and disable PT/SL entirely
         vol = spread_val.pct_change().ewm(span=100).std().iloc[-1]
         if pd.isna(vol) or vol <= 0:
             vol = 0.005
-        vol_annualized = vol * np.sqrt(78)
 
         active_signals[spread_name] = {
             'johansen_weights': weights,
@@ -193,9 +200,9 @@ def generate_signals(live_matrix: pd.DataFrame, models_dir: str = "the_models"):
             'ai_confidence': ai_prob,
             'bet_size': bet_size,
             'entry_price': float(spread_val.iloc[-1]),
-            'volatility': float(vol_annualized),
-            'pt_threshold': float(vol_annualized * PT_SKEW),
-            'sl_threshold': float(vol_annualized * SL_SKEW),
+            'volatility': float(vol),
+            'pt_threshold': float(vol * PT_SKEW),
+            'sl_threshold': float(vol * SL_SKEW),
             'time_barrier': TIME_BARRIER,
             'entry_bar': 0,
         }
@@ -251,7 +258,7 @@ def check_exits(live_matrix: pd.DataFrame, open_positions: dict, models_dir: str
             exits[spread_name] = "invalid_position"
             continue
 
-        # 1. Trade return
+        # 1. Trade return (per-bar fractional spread change, signed by direction)
         trade_return = (current_price / entry_price - 1.0) * direction
 
         # 2. Profit take
