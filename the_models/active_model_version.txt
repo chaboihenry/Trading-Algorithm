@@ -1,1 +1,1 @@
-Model: meta_labeler_v4.json | ROC-AUC: 0.5710 | Features: [frac_diff, volatility, signal_strength]
+Model: meta_labeler_v5.json | ROC-AUC: 0.4523 | Features: [frac_diff, volatility, signal_strength]
