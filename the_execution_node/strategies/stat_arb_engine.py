@@ -179,7 +179,7 @@ def generate_signals(live_matrix: pd.DataFrame, models_dir: str = "the_models"):
         vol = spread_val.pct_change().ewm(span=100).std().iloc[-1]
         if pd.isna(vol) or vol <= 0:
             vol = 0.005
-        vol_annualized = vol * np.sqrt(78)
+        vol_daily = vol * np.sqrt(78)
 
         active_signals[spread_name] = {
             'johansen_weights': weights,
@@ -189,9 +189,9 @@ def generate_signals(live_matrix: pd.DataFrame, models_dir: str = "the_models"):
             'ai_confidence': ai_prob,
             'bet_size': bet_size,
             'entry_price': float(spread_val.iloc[-1]),
-            'volatility': float(vol_annualized),
-            'pt_threshold': float(vol_annualized * PT_SKEW),
-            'sl_threshold': float(vol_annualized * SL_SKEW),
+            'volatility': float(vol_daily),
+            'pt_threshold': float(vol_daily * PT_SKEW),
+            'sl_threshold': float(vol_daily * SL_SKEW),
             'time_barrier': TIME_BARRIER,
             'entry_bar': 0,
         }
