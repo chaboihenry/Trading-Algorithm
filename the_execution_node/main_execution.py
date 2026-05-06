@@ -12,21 +12,14 @@ from dotenv import load_dotenv
 from the_execution_node.core.live_streamer import LiveStreamer
 from the_execution_node.core.order_router import OrderRouter
 from the_execution_node.strategies.stat_arb_engine import generate_signals, check_exits
-
+from the_utilities.strategy_config import (
+    COOLDOWN_MINUTES, EOD_LIQUIDATION_TIME_MINUTES, SAFE_ENTRY_WINDOW,
+    EOD_COOLDOWN_SKIP_MINUTES
+)
 
 class ExecutionOrchestrator:
-    # The 24/7 Master Daemon of the Execution Node.
-    # Manages the full lifecycle: data streaming, signal generation,
-    # entry routing, position tracking, exit management, and git sync.
-
-    # Minimum bars needed in the live matrix before evaluating signals
     MIN_BUFFER = 50
-
-    # How often to evaluate signals during market hours (seconds)
     EVAL_INTERVAL = 60
-
-    # Minutes to block re-entry after exiting a spread (prevents whipsaw)
-    COOLDOWN_MINUTES = 30
 
     def __init__(self):
         self._setup_logging()
@@ -104,22 +97,15 @@ class ExecutionOrchestrator:
                 self.open_positions = {}
 
     def _is_safe_time(self):
-        # Only allow new entries between 09:45 and 15:45 ET
-        # Matches the backtester's microstructure time filter
         now = datetime.now()
         current_minutes = now.hour * 60 + now.minute
-        return 585 <= current_minutes <= 945  # 09:45 = 585, 15:45 = 945
+        start_min, end_min = SAFE_ENTRY_WINDOW
+        return start_min <= current_minutes <= end_min
     
     def _force_eod_liquidation(self):
-        # Force-close all positions at 15:50 ET to avoid overnight gap risk
         now = datetime.now()
         current_minutes = now.hour * 60 + now.minute
-
-        # 15:50 = 950 minutes — gives 10 min buffer before 16:00 close
-        if current_minutes < 950:
-            return
-
-        if not self.open_positions:
+        if current_minutes < EOD_LIQUIDATION_TIME_MINUTES:
             return
 
         self.logger.info("[EOD] 15:50 ET — Force-liquidating all positions to avoid overnight risk.")
@@ -181,8 +167,8 @@ class ExecutionOrchestrator:
             
             # Skip if the spread is on cooldown
             last_exit = self.cooldown_tracker.get(spread_name)
-            if last_exit and (datetime.now() - last_exit) < timedelta(minutes=self.COOLDOWN_MINUTES):
-                continue
+            if last_exit and (datetime.now() - last_exit) < timedelta(minutes=COOLDOWN_MINUTES):
+            continue
 
             target_pos = signal_data['target_position']
             z_score = signal_data['current_z']

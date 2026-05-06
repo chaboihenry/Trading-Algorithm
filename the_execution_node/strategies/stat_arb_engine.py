@@ -5,14 +5,10 @@ import numpy as np
 import xgboost as xgb
 from the_research_node.m1_xgboost_trainer import apply_frac_diff, find_optimal_d
 
-# Monte Carlo optimized parameters (must match backtester)
-Z_THRESH = 2.39
-AI_THRESH = 0.56
-PT_SKEW = 1.90
-SL_SKEW = 1.75
-TIME_BARRIER = 120
-LEVERAGE = 2.0
-
+from the_utilities.strategy_config import (
+    Z_THRESH, AI_THRESH, PT_SKEW, SL_SKEW, TIME_BARRIER, LEVERAGE,
+    CUSUM_REGIME_THRESHOLD
+)
 
 def _load_meta_labeler(models_dir: str):
     # Load the active XGBoost meta-labeler from the version ledger

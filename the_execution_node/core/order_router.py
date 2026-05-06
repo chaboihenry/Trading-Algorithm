@@ -4,14 +4,14 @@ import json
 import pandas as pd
 from alpaca_trade_api.rest import REST
 
-# Monte Carlo optimized parameters (must match stat_arb_engine and backtester)
-LEVERAGE = 2.0
-
+from the_utilities.strategy_config import LEVERAGE, SLIPPAGE_BPS_LIVE, HEDGE_RATIO_MIN
 
 class OrderRouter:
     # Executes trades based on HRP allocations, Half-Kelly sizing,
     # and Johansen hedge ratios. Verifies buying power before routing.
 
+    SLIPPAGE_BPS = SLIPPAGE_BPS_LIVE
+    
     def __init__(self, api_key: str, secret_key: str, base_url: str):
         self.api = REST(api_key, secret_key, base_url)
 
@@ -106,7 +106,7 @@ class OrderRouter:
         if leg_notionals:
             min_leg = min(leg_notionals)
             max_leg = max(leg_notionals)
-            if max_leg > 0 and (min_leg / max_leg) < 0.15:
+            if max_leg > 0 and (min_leg / max_leg) < HEDGE_RATIO_MIN:
                 hedge_ratio_pct = 100 * min_leg / max_leg
                 print(f"[ROUTER] Blocked {spread_name}: "
                       f"degenerate hedge (smallest leg is {hedge_ratio_pct:.1f}% of largest).")

@@ -7,41 +7,28 @@ import xgboost as xgb
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 from the_research_node.m1_xgboost_trainer import apply_frac_diff, find_optimal_d
-
+from the_utilities.strategy_config import (
+    Z_THRESH, AI_THRESH, PT_SKEW, SL_SKEW, TIME_BARRIER, LEVERAGE,
+    WARMUP_BARS, STARTING_EQUITY, SLIPPAGE_BPS_BACKTEST, 
+    SHORT_BORROW_APR, BARS_PER_YEAR,
+    NON_SHORTABLE_TICKERS, COOLDOWN_BARS
+)
+from the_utilities import strategy_config as cfg
 
 class VectorizedBacktester:
-    # Simulates the Execution Node pipeline over historical data.
-    # Lifecycle-aware simulation using structural profiler ledger.
-
-    # Monte Carlo optimized parameters (must match stat_arb_engine)
-    Z_THRESH = 2.39
-    AI_THRESH = 0.56
-    PT_SKEW = 1.90
-    SL_SKEW = 1.75
-    TIME_BARRIER = 120
-
-    # Reg-T Pattern Day Trader margin — 2x for longs, 2x for shorts combined
-    LEVERAGE = 2.0
-    WARMUP_BARS = 2340
-
-    # Starting capital — matches the Alpaca paper account
-    STARTING_EQUITY = 100_000.0
-
-    # Per-leg slippage on market orders (one-way cost)
-    SLIPPAGE_BPS = 7.0
-
-    # cooldown tracking — 30 min / 5 min per bar = 6 bars
-    COOLDOWN_BARS = 6
-
-    # Non-shortable tickers (mirrors Alpaca's restrictions — SO is the known one)
-    NON_SHORTABLE = {'SO'}
-
-    # Annualized short borrow cost
-    SHORT_BORROW_APR = 0.01
-    BARS_PER_YEAR = 252 * 78
-
-    # equal-weight allocation across baskets active in any given window
-    EQUAL_WEIGHT_ALLOCATION = True
+    Z_THRESH = cfg.Z_THRESH
+    AI_THRESH = cfg.AI_THRESH
+    PT_SKEW = cfg.PT_SKEW
+    SL_SKEW = cfg.SL_SKEW
+    TIME_BARRIER = cfg.TIME_BARRIER
+    LEVERAGE = cfg.LEVERAGE
+    WARMUP_BARS = cfg.WARMUP_BARS
+    STARTING_EQUITY = cfg.STARTING_EQUITY
+    SLIPPAGE_BPS = cfg.SLIPPAGE_BPS_BACKTEST
+    SHORT_BORROW_APR = cfg.SHORT_BORROW_APR
+    BARS_PER_YEAR = cfg.BARS_PER_YEAR
+    NON_SHORTABLE = cfg.NON_SHORTABLE_TICKERS
+    COOLDOWN_BARS = cfg.COOLDOWN_BARS
 
     def __init__(self, models_dir: str = "the_models", data_dir: str = "the_execution_node/data"):
         self.models_dir = models_dir

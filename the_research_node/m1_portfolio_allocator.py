@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 import scipy.cluster.hierarchy as sch
 from scipy.spatial.distance import squareform
+from the_utilities.strategy_config import HRP_MAX_CAP, HRP_MIN_FLOOR
 
 UNIVERSE_PATH = "the_models/curated_universe.json"
 
