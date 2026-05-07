@@ -2,20 +2,21 @@ import os
 import json
 import pandas as pd
 
+from the_utilities.paths import EXECUTION_DATA_DIR, STRUCTURAL_LIFECYCLE_JSON, BACKTEST_PARQUET
 
-def compile_historical_state(lookback_years: int = 5, models_dir: str = "the_models", output_dir: str = "the_execution_node/data"):
+
+def compile_historical_state(lookback_years: int = 5):
     # Compiles 5-minute historical state for every ticker that ever cointegrated
     # across the 5-year lifecycle ledger (not just the current trading universe).
 
     print(f"\n====== COMPILING {lookback_years}-YEAR HISTORICAL STATE ======")
 
     # 1. Load the 5-year lifecycle ledger and extract the full ticker set
-    ledger_path = os.path.join(models_dir, "structural_lifecycle_5yr.json")
     try:
-        with open(ledger_path, "r") as f:
+        with open(STRUCTURAL_LIFECYCLE_JSON, "r") as f:
             ledger = json.load(f)
     except FileNotFoundError:
-        print(f"[CRITICAL] {ledger_path} not found. Run m1_structural_profiler first.")
+        print(f"[CRITICAL] {STRUCTURAL_LIFECYCLE_JSON} not found. Run m1_structural_profiler first.")
         return
 
     # Collect every ticker that ever appeared in any basket's lifecycle
@@ -82,13 +83,12 @@ def compile_historical_state(lookback_years: int = 5, models_dir: str = "the_mod
     master_matrix = master_matrix.ffill().dropna()
 
     # 5. Export
-    os.makedirs(output_dir, exist_ok=True)
-    output_filename = os.path.join(output_dir, "backtest_5m_5yr.parquet")
+    os.makedirs(EXECUTION_DATA_DIR, exist_ok=True)
 
-    print(f"[SYSTEM] Writing to {output_filename}...")
-    master_matrix.to_parquet(output_filename, engine='pyarrow', compression='snappy')
+    print(f"[SYSTEM] Writing to {BACKTEST_PARQUET}...")
+    master_matrix.to_parquet(BACKTEST_PARQUET, engine='pyarrow', compression='snappy')
 
-    file_size_mb = os.path.getsize(output_filename) / (1024 * 1024)
+    file_size_mb = os.path.getsize(BACKTEST_PARQUET) / (1024 * 1024)
 
     print("\n====== EXPORT SUCCESS ======")
     print(f"Matrix Shape:    {master_matrix.shape[0]} rows x {master_matrix.shape[1]} columns")

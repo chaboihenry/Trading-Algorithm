@@ -16,6 +16,7 @@ from the_utilities.strategy_config import (
     COOLDOWN_MINUTES, EOD_LIQUIDATION_TIME_MINUTES, SAFE_ENTRY_WINDOW,
     EOD_COOLDOWN_SKIP_MINUTES
 )
+from the_utilities.paths import LOGS_DIR, EXECUTION_LOG, OPEN_POSITIONS_JSON
 
 class ExecutionOrchestrator:
     MIN_BUFFER = 50
@@ -30,7 +31,6 @@ class ExecutionOrchestrator:
         self.secret_key = os.getenv("ALPACA_API_SECRET")
         self.base_url = os.getenv("ALPACA_API_BASE_URL", "https://paper-api.alpaca.markets")
 
-        self.models_dir = "the_models"
         self.router = OrderRouter(self.api_key, self.secret_key, self.base_url)
 
         # Position tracking: spread_name -> position metadata from stat_arb_engine
@@ -43,8 +43,8 @@ class ExecutionOrchestrator:
 
     def _setup_logging(self):
         # Dual logging: terminal output + rotating file output
-        os.makedirs("logs", exist_ok=True)
-        log_file = "logs/execution_node.log"
+        os.makedirs(LOGS_DIR, exist_ok=True)
+        log_file = EXECUTION_LOG
 
         self.logger = logging.getLogger("QuantNode")
         self.logger.setLevel(logging.INFO)
@@ -77,19 +77,17 @@ class ExecutionOrchestrator:
 
     def _save_position_state(self):
         # Persist open positions to disk so we survive restarts
-        state_path = os.path.join("logs", "open_positions.json")
         try:
-            with open(state_path, "w") as f:
+            with open(OPEN_POSITIONS_JSON, "w") as f:
                 json.dump(self.open_positions, f, indent=4, default=str)
         except Exception as e:
             self.logger.warning(f"Failed to save position state: {e}")
 
     def _load_position_state(self):
         # Restore open positions from disk after a restart
-        state_path = os.path.join("logs", "open_positions.json")
-        if os.path.exists(state_path):
+        if os.path.exists(OPEN_POSITIONS_JSON):
             try:
-                with open(state_path, "r") as f:
+                with open(OPEN_POSITIONS_JSON, "r") as f:
                     self.open_positions = json.load(f)
                 self.logger.info(f"Restored {len(self.open_positions)} open positions from disk.")
             except Exception as e:
@@ -127,7 +125,7 @@ class ExecutionOrchestrator:
         if not self.open_positions:
             return
 
-        exits = check_exits(matrix, self.open_positions, self.models_dir)
+        exits = check_exits(matrix, self.open_positions)
 
         for spread_name, reason in exits.items():
             pos_data = self.open_positions.get(spread_name, {})
@@ -153,7 +151,7 @@ class ExecutionOrchestrator:
         if not self._is_safe_time():
             return
 
-        signals, _ = generate_signals(matrix, self.models_dir)
+        signals, _ = generate_signals(matrix)
 
         if not signals:
             return
@@ -168,7 +166,7 @@ class ExecutionOrchestrator:
             # Skip if the spread is on cooldown
             last_exit = self.cooldown_tracker.get(spread_name)
             if last_exit and (datetime.now() - last_exit) < timedelta(minutes=COOLDOWN_MINUTES):
-            continue
+                continue
 
             target_pos = signal_data['target_position']
             z_score = signal_data['current_z']
@@ -211,7 +209,7 @@ class ExecutionOrchestrator:
 
         # Start the live data stream
         self.streamer = LiveStreamer(
-            self.api_key, self.secret_key, self.base_url, self.models_dir
+            self.api_key, self.secret_key, self.base_url
         )
         stream_thread = threading.Thread(target=self.streamer.start_streaming, daemon=True)
         stream_thread.start()

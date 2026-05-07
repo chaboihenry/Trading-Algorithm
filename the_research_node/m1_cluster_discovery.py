@@ -9,10 +9,12 @@ from sklearn.preprocessing import StandardScaler
 from statsmodels.tsa.vector_ar.vecm import coint_johansen
 import statsmodels.api as sm
 
-def _append_discovery_ledger(entry: dict, ledger_path: str = "logs/cluster_discovery_ledger.jsonl"):
+from the_utilities.paths import MODELS_DIR, CURATED_UNIVERSE_JSON, DISCOVERY_LEDGER_JSONL
+
+def _append_discovery_ledger(entry: dict):
     # Append one JSON line per cluster tested. JSONL format (one object per line)
-    os.makedirs(os.path.dirname(ledger_path), exist_ok=True)
-    with open(ledger_path, "a") as f:
+    os.makedirs(os.path.dirname(DISCOVERY_LEDGER_JSONL), exist_ok=True)
+    with open(DISCOVERY_LEDGER_JSONL, "a") as f:
         f.write(json.dumps(entry) + "\n")
 
 def load_universe_list():
@@ -234,11 +236,10 @@ def run_discovery_pipeline():
             
     print(f"\n[SYSTEM] {len(confirmed_baskets)} cointegrated baskets confirmed.")
             
-    target_dir = 'the_models'
-    os.makedirs(target_dir, exist_ok=True)
+    os.makedirs(MODELS_DIR, exist_ok=True)
 
     # Save master ledger (preserves historical baskets)
-    ledger_path = os.path.join(target_dir, 'universe_baskets.json')
+    ledger_path = os.path.join(MODELS_DIR, 'universe_baskets.json')
     ledger_payload = {"historical_basket_names": [], "baskets": {}}
     
     if os.path.exists(ledger_path):
@@ -259,7 +260,7 @@ def run_discovery_pipeline():
         
     ledger_payload["historical_basket_names"] = list(ledger_payload["baskets"].keys())
         
-    temp_ledger_path = os.path.join(target_dir, 'universe_baskets_temp.json')
+    temp_ledger_path = os.path.join(MODELS_DIR, 'universe_baskets_temp.json')
     with open(temp_ledger_path, 'w') as f:
         json.dump(ledger_payload, f, indent=4)
     os.replace(temp_ledger_path, ledger_path)
@@ -280,12 +281,11 @@ def run_discovery_pipeline():
             "flat_list": list(approved_tickers)
         }
         
-        final_path = os.path.join(target_dir, 'curated_universe.json')
-        temp_path = os.path.join(target_dir, 'curated_universe_temp.json')
+        temp_path = os.path.join(MODELS_DIR, 'curated_universe_temp.json')
         
         with open(temp_path, 'w') as f:
             json.dump(payload, f, indent=4)
-        os.replace(temp_path, final_path)
+        os.replace(temp_path, CURATED_UNIVERSE_JSON)
             
         print(f"[SUCCESS] Curated {len(approved_tickers)} tickers across {len(confirmed_baskets)} baskets for Live Execution.")
     else:

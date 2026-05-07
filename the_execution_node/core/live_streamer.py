@@ -5,14 +5,15 @@ import pandas as pd
 from datetime import datetime
 from alpaca_trade_api.stream import Stream
 
+from the_utilities.paths import CURATED_UNIVERSE_JSON
+
 class LiveStreamer:
     # Asynchronous WebSocket streamer.
     # Maintains a rolling live matrix of prices for the active curated universe.
-    def __init__(self, api_key: str, secret_key: str, base_url: str, models_dir: str = "the_models"):
+    def __init__(self, api_key: str, secret_key: str, base_url: str):
         self.api_key = api_key
         self.secret_key = secret_key
         self.base_url = base_url
-        self.models_dir = models_dir
         
         # 1. Initialize the rolling window for live prices
         self.live_matrix = pd.DataFrame()
@@ -31,9 +32,7 @@ class LiveStreamer:
 
     def _load_universe(self):
         # Extracts the flat_list of tickers from the M1's JSON payload.
-        path = os.path.join(self.models_dir, "curated_universe.json")
-        
-        with open(path, "r") as f:
+        with open(CURATED_UNIVERSE_JSON, "r") as f:
             data = json.load(f)
             self.active_tickers = data.get("flat_list", [])
             
@@ -104,7 +103,6 @@ if __name__ == "__main__":
         api_key=API_KEY,
         secret_key=SECRET_KEY,
         base_url=BASE_URL,
-        models_dir="the_models"
     )
 
     # 3. Run the stream in a background daemon thread

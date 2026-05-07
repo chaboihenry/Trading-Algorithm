@@ -8,22 +8,20 @@ from sklearn.preprocessing import StandardScaler
 import warnings
 
 from the_research_node.m1_cluster_discovery import test_cointegration
+from the_utilities.paths import MODELS_DIR, BACKTEST_PARQUET, STRUCTURAL_LIFECYCLE_JSON
 
 warnings.filterwarnings('ignore')
 
 
 def build_structural_history():
-    data_path = 'the_execution_node/data/backtest_5m_5yr.parquet'
-    output_path = 'the_models/structural_lifecycle_5yr.json'
-
-    print(f"[SYSTEM] Loading 5-year history from {data_path}...")
+    print(f"[SYSTEM] Loading 5-year history from {BACKTEST_PARQUET}...")
     try:
-        df_5m = pd.read_parquet(data_path)
+        df_5m = pd.read_parquet(BACKTEST_PARQUET)
         if not isinstance(df_5m.index, pd.DatetimeIndex):
             df_5m.index = pd.to_datetime(df_5m.index)
         df_5m = df_5m.sort_index().ffill().dropna()
     except FileNotFoundError:
-        print(f"[CRITICAL] Parquet file not found at {data_path}")
+        print(f"[CRITICAL] Parquet file not found at {BACKTEST_PARQUET}")
         return
 
     # Downsample to Daily strictly for the PCA/DBSCAN economic clustering
@@ -102,11 +100,11 @@ def build_structural_history():
         print(f"Validated {len(active_in_window)} structurally sound baskets.")
 
     # 3. Export the 5-Year Master Ledger
-    os.makedirs('the_models', exist_ok=True)
-    with open(output_path, 'w') as f:
+    os.makedirs(MODELS_DIR, exist_ok=True)
+    with open(STRUCTURAL_LIFECYCLE_JSON, 'w') as f:
         json.dump(ledger, f, indent=4)
 
-    print(f"\n[SUCCESS] Walk-Forward Complete. {len(ledger)} historical lifecycles saved to {output_path}.")
+    print(f"\n[SUCCESS] Walk-Forward Complete. {len(ledger)} historical lifecycles saved to {STRUCTURAL_LIFECYCLE_JSON}.")
 
 
 if __name__ == "__main__":

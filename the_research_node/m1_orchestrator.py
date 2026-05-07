@@ -7,9 +7,9 @@ from datetime import datetime
 import schedule
 import sys
 
-LOG_DIR = "logs"
-LOG_FILE = os.path.join(LOG_DIR, "orchestrator.log")
-os.makedirs(LOG_DIR, exist_ok=True)
+from the_utilities.paths import LOGS_DIR, ORCHESTRATOR_LOG, MODELS_DIR, RAW_MACRO_CSV
+
+os.makedirs(LOGS_DIR, exist_ok=True)
 
 logger = logging.getLogger("M1Orchestrator")
 logger.setLevel(logging.INFO)
@@ -19,7 +19,7 @@ if not logger.handlers:
     console.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
     logger.addHandler(console)
 
-    fh = RotatingFileHandler(LOG_FILE, maxBytes=5*1024*1024, backupCount=5)
+    fh = RotatingFileHandler(ORCHESTRATOR_LOG, maxBytes=5*1024*1024, backupCount=5)
     fh.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
     logger.addHandler(fh)
 
@@ -47,7 +47,7 @@ def git_push():
     # Step 1: Stage files
     try:
         subprocess.run(
-            ["git", "add", "the_models/", "the_execution_node/data/raw_macro_data.csv"],
+            ["git", "add", f"{MODELS_DIR}/", RAW_MACRO_CSV],
             check=True, capture_output=True, text=True
         )
     except subprocess.CalledProcessError as e:

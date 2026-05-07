@@ -5,8 +5,7 @@ import numpy as np
 import scipy.cluster.hierarchy as sch
 from scipy.spatial.distance import squareform
 from the_utilities.strategy_config import HRP_MAX_CAP, HRP_MIN_FLOOR
-
-UNIVERSE_PATH = "the_models/curated_universe.json"
+from the_utilities.paths import CURATED_UNIVERSE_JSON
 
 # --- LÓPEZ DE PRADO HRP MATHEMATICS ---
 
@@ -61,11 +60,11 @@ def correl_dist(corr):
 def run_hrp_allocation():
     print("\n=== ASYNC COMPUTE NODE: HRP PORTFOLIO ALLOCATOR ===")
     
-    if not os.path.exists(UNIVERSE_PATH):
+    if not os.path.exists(CURATED_UNIVERSE_JSON):
         print("[ERROR] Curated universe missing. Cannot allocate capital.")
         return
 
-    with open(UNIVERSE_PATH, 'r') as f:
+    with open(CURATED_UNIVERSE_JSON, 'r') as f:
         universe_data = json.load(f)
     
     baskets = universe_data.get("baskets", {})
@@ -74,7 +73,7 @@ def run_hrp_allocation():
         for name in baskets:
             baskets[name]['capital_allocation'] = 1.0 / len(baskets) if baskets else 1.0
         universe_data['baskets'] = baskets
-        with open(UNIVERSE_PATH, 'w') as f:
+        with open(CURATED_UNIVERSE_JSON, 'w') as f:
             json.dump(universe_data, f, indent=4)
         return
 
@@ -188,10 +187,10 @@ def run_hrp_allocation():
     universe_data['baskets'] = baskets
     
     # Atomic Write to protect the live scraper
-    temp_path = UNIVERSE_PATH + ".tmp"
+    temp_path = CURATED_UNIVERSE_JSON + ".tmp"
     with open(temp_path, 'w') as f:
         json.dump(universe_data, f, indent=4)
-    os.replace(temp_path, UNIVERSE_PATH)
+    os.replace(temp_path, CURATED_UNIVERSE_JSON)
 
     print("\n[SUCCESS] Capital Allocation complete and injected into curated_universe.json.")
 

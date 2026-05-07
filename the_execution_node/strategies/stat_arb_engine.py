@@ -9,33 +9,34 @@ from the_utilities.strategy_config import (
     Z_THRESH, AI_THRESH, PT_SKEW, SL_SKEW, TIME_BARRIER, LEVERAGE,
     CUSUM_REGIME_THRESHOLD
 )
+from the_utilities.paths import (
+    MODELS_DIR, CURATED_UNIVERSE_JSON, ACTIVE_MODEL_VERSION,
+    META_LABELER_JSON, RAW_MACRO_CSV
+)
 
-def _load_meta_labeler(models_dir: str):
+def _load_meta_labeler():
     # Load the active XGBoost meta-labeler from the version ledger
-    version_path = os.path.join(models_dir, "active_model_version.txt")
     try:
-        with open(version_path, "r") as f:
+        with open(ACTIVE_MODEL_VERSION, "r") as f:
             lines = f.readlines()
         latest = lines[-1].strip()
         model_name = latest.split("Model:")[1].split("|")[0].strip() if "Model:" in latest else latest
+        model_path = os.path.join(MODELS_DIR, model_name)
     except Exception:
-        model_name = "meta_labeler_v3.json"
+        model_path = META_LABELER_JSON
 
-    model_path = os.path.join(models_dir, model_name)
     model = xgb.Booster()
     model.load_model(model_path)
     return model
 
 
-def check_regime_safe(data_dir: str = "the_execution_node/data", threshold: float = 0.02):
+def check_regime_safe(threshold: float = 0.02):
     # CUSUM regime filter on daily SPY returns from the macro CSV
     # Returns False if a structural break was detected on the most recent day
-    csv_path = os.path.join(data_dir, "raw_macro_data.csv")
-
     try:
-        macro_df = pd.read_csv(csv_path, index_col='Date', parse_dates=True)
+        macro_df = pd.read_csv(RAW_MACRO_CSV, index_col='Date', parse_dates=True)
     except Exception as e:
-        print(f"[SHIELD] Could not load {csv_path}: {e}. Defaulting to SAFE.")
+        print(f"[SHIELD] Could not load {RAW_MACRO_CSV}: {e}. Defaulting to SAFE.")
         return True
 
     if 'SPY' not in macro_df.columns:
@@ -66,14 +67,13 @@ def check_regime_safe(data_dir: str = "the_execution_node/data", threshold: floa
     return regime_safe
 
 
-def generate_signals(live_matrix: pd.DataFrame, models_dir: str = "the_models"):
+def generate_signals(live_matrix: pd.DataFrame):
     # Evaluate all active spreads and return filtered entry signals
     # Returns active_signals dict and spread_returns DataFrame
 
     # 1. Load universe
-    path = os.path.join(models_dir, "curated_universe.json")
     try:
-        with open(path, "r") as f:
+        with open(CURATED_UNIVERSE_JSON, "r") as f:
             curated_baskets = json.load(f).get("baskets", {})
     except FileNotFoundError:
         print("[CRITICAL] curated_universe.json not found.")
@@ -87,7 +87,7 @@ def generate_signals(live_matrix: pd.DataFrame, models_dir: str = "the_models"):
 
     # 3. Load meta-labeler once per evaluation cycle
     try:
-        meta_labeler = _load_meta_labeler(models_dir)
+        meta_labeler = _load_meta_labeler()
     except Exception as e:
         print(f"[WARNING] Meta-labeler load failed: {e}. Signals will be unfiltered.")
         meta_labeler = None
@@ -202,13 +202,12 @@ def generate_signals(live_matrix: pd.DataFrame, models_dir: str = "the_models"):
     return active_signals, spread_returns
 
 
-def check_exits(live_matrix: pd.DataFrame, open_positions: dict, models_dir: str = "the_models"):
+def check_exits(live_matrix: pd.DataFrame, open_positions: dict):
     # Evaluate open positions for exit conditions
     # Returns dict of spread_name -> exit_reason for positions that should close
 
-    path = os.path.join(models_dir, "curated_universe.json")
     try:
-        with open(path, "r") as f:
+        with open(CURATED_UNIVERSE_JSON, "r") as f:
             curated_baskets = json.load(f).get("baskets", {})
     except FileNotFoundError:
         return {}
@@ -292,7 +291,7 @@ if __name__ == "__main__":
     live_matrix = pd.DataFrame(prices, index=dates, columns=dummy_tickers)
 
     print("[SYSTEM] Running signal generation on synthetic data...")
-    signals, returns = generate_signals(live_matrix, models_dir="the_models")
+    signals, returns = generate_signals(live_matrix)
 
     if not signals:
         print("[INFO] No signals fired (expected on random data).")

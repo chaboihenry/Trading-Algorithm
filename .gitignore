@@ -66,4 +66,4 @@ temp/
 # Ignore Jupyter Notebook checkpoints
 .ipynb_checkpoints/
 
-trade_history.csv/
+trade_history.csv

@@ -1,6 +1,7 @@
 import os
 import pandas as pd
 from the_utilities.strategy_config import CUSUM_REGIME_THRESHOLD, CUSUM_RECOVERY_DAYS
+from the_utilities.paths import RAW_MACRO_CSV
 
 
 def compute_cusum_states(returns: pd.Series, threshold: float = CUSUM_REGIME_THRESHOLD):
@@ -20,11 +21,10 @@ def compute_cusum_states(returns: pd.Series, threshold: float = CUSUM_REGIME_THR
     return pd.Series(states, index=returns.index)
 
 
-def check_regime_safe_now(macro_csv: str = "the_execution_node/data/raw_macro_data.csv",
-                          recovery_days: int = CUSUM_RECOVERY_DAYS) -> bool:
+def check_regime_safe_now(recovery_days: int = CUSUM_RECOVERY_DAYS) -> bool:
     # Returns True only after N consecutive safe days post-break.
     try:
-        df = pd.read_csv(macro_csv, index_col='Date', parse_dates=True)
+        df = pd.read_csv(RAW_MACRO_CSV, index_col='Date', parse_dates=True)
         if 'SPY' not in df.columns:
             return True
         returns = df['SPY'].pct_change().dropna()

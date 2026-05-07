@@ -14,6 +14,9 @@ from the_utilities.strategy_config import (
     NON_SHORTABLE_TICKERS, COOLDOWN_BARS
 )
 from the_utilities import strategy_config as cfg
+from the_utilities.paths import (
+    STRUCTURAL_LIFECYCLE_JSON, META_LABELER_JSON, BACKTEST_PARQUET, RAW_MACRO_CSV
+)
 
 class VectorizedBacktester:
     Z_THRESH = cfg.Z_THRESH
@@ -30,9 +33,7 @@ class VectorizedBacktester:
     NON_SHORTABLE = cfg.NON_SHORTABLE_TICKERS
     COOLDOWN_BARS = cfg.COOLDOWN_BARS
 
-    def __init__(self, models_dir: str = "the_models", data_dir: str = "the_execution_node/data"):
-        self.models_dir = models_dir
-        self.data_dir = data_dir
+    def __init__(self):
         self.ledger = {}
         self.meta_labeler = None
         self._load_payloads()
@@ -44,29 +45,26 @@ class VectorizedBacktester:
 
     def _load_payloads(self):
         # load lifecycle ledger instead of curated_universe
-        ledger_path = os.path.join(self.models_dir, "structural_lifecycle_5yr.json")
         try:
-            with open(ledger_path, "r") as f:
+            with open(STRUCTURAL_LIFECYCLE_JSON, "r") as f:
                 self.ledger = json.load(f)
             print(f"[SUCCESS] Loaded {len(self.ledger)} historical baskets from structural_lifecycle_5yr.json.")
         except FileNotFoundError:
             print("[CRITICAL] structural_lifecycle_5yr.json not found — run m1_structural_profiler first.")
             raise
 
-        xgb_path = os.path.join(self.models_dir, "meta_labeler_v3.json")
         try:
             self.meta_labeler = xgb.Booster()
-            self.meta_labeler.load_model(xgb_path)
+            self.meta_labeler.load_model(META_LABELER_JSON)
             print("[SUCCESS] Loaded XGBoost Meta-Labeler.")
         except Exception as e:
             print(f"[WARNING] Could not load XGBoost model. Error: {e}")
             self.meta_labeler = None
 
     def _fetch_historical_data(self):
-        data_path = os.path.join(self.data_dir, "backtest_5m_5yr.parquet")
-        print(f"[SYSTEM] Loading historical matrix from {data_path}...")
+        print(f"[SYSTEM] Loading historical matrix from {BACKTEST_PARQUET}...")
         try:
-            df = pd.read_parquet(data_path)
+            df = pd.read_parquet(BACKTEST_PARQUET)
             if not isinstance(df.index, pd.DatetimeIndex):
                 df.index = pd.to_datetime(df.index)
             df = df.sort_index()
@@ -78,16 +76,15 @@ class VectorizedBacktester:
             print(f"[SUCCESS] Historical matrix: {df.shape[0]} rows x {df.shape[1]} cols")
             return df.ffill().dropna()
         except FileNotFoundError:
-            print(f"[CRITICAL] Historical data not found at {data_path}.")
+            print(f"[CRITICAL] Historical data not found at {BACKTEST_PARQUET}.")
             raise
 
     def _apply_cusum_regime_shield(self, target_index, threshold: float = 0.02):
-        csv_path = os.path.join(self.data_dir, "raw_macro_data.csv")
         try:
-            macro_df = pd.read_csv(csv_path, index_col='Date', parse_dates=True)
+            macro_df = pd.read_csv(RAW_MACRO_CSV, index_col='Date', parse_dates=True)
             macro_df.index = pd.to_datetime(macro_df.index, utc=True)
         except Exception as e:
-            print(f"[WARNING] Could not load macro CSV: {e}. Shield defaulting SAFE.")
+            print(f"[WARNING] Could not load macro CSV ({RAW_MACRO_CSV}): {e}. Shield defaulting SAFE.")
             return pd.Series(True, index=target_index)
 
         spy_daily = macro_df['SPY']
@@ -342,9 +339,8 @@ class VectorizedBacktester:
         print("[SYSTEM] Building equity curve...")
         equity_curve = self.STARTING_EQUITY + realized_pnl.cumsum()
 
-        csv_path = os.path.join(self.data_dir, "raw_macro_data.csv")
         try:
-            macro_df = pd.read_csv(csv_path, index_col='Date', parse_dates=True)
+            macro_df = pd.read_csv(RAW_MACRO_CSV, index_col='Date', parse_dates=True)
             macro_df.index = pd.to_datetime(macro_df.index, utc=True)
             spy_data = macro_df['SPY']
         except Exception:

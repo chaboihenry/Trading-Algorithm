@@ -8,9 +8,7 @@ from numba import jit
 from statsmodels.tsa.stattools import adfuller
 from sklearn.model_selection import RandomizedSearchCV
 
-# --- CONFIGURATION & ENV ---
-UNIVERSE_PATH = "the_models/curated_universe.json"
-MODELS_DIR = "the_models"
+from the_utilities.paths import MODELS_DIR, CURATED_UNIVERSE_JSON, ACTIVE_MODEL_VERSION
 
 # --- 1. DIB CONSTRUCTION ENGINE ---
 @jit(nopython=True)
@@ -192,11 +190,11 @@ def train_meta_labeler():
     print("\n=== ASYNC COMPUTE NODE: XGBOOST META-LABELER ===")
     os.makedirs(MODELS_DIR, exist_ok=True)
     
-    if not os.path.exists(UNIVERSE_PATH):
+    if not os.path.exists(CURATED_UNIVERSE_JSON):
         print("[ERROR] Curated universe missing. Run discovery pipeline first.")
         return
 
-    with open(UNIVERSE_PATH, 'r') as f:
+    with open(CURATED_UNIVERSE_JSON, 'r') as f:
         universe_data = json.load(f)
     
     baskets = universe_data.get("baskets", {})
@@ -342,10 +340,8 @@ def train_meta_labeler():
     used_features = best_model.feature_names_in_
     feature_str = ", ".join(used_features) if used_features is not None and len(used_features) > 0 else "Unknown"
     
-    version_file = os.path.join(MODELS_DIR, "active_model_version.txt")
-
     # Overwrite with only the current active model
-    with open(version_file, "w") as f:
+    with open(ACTIVE_MODEL_VERSION, "w") as f:
         f.write(f"Model: {model_name} | ROC-AUC: {roc_score:.4f} | Features: [{feature_str}]\n")
 
 if __name__ == "__main__":

@@ -9,10 +9,12 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from datetime import datetime, timedelta
 
+from the_utilities.paths import LOGS_DIR
+
 # --- CONFIGURATION ---
 WRDS_USERNAME = "henryvianna"
 UNIVERSE_PATH = "universe.txt"
-LOG_FILE = "logs/wrds_collection.log"
+LOG_FILE = os.path.join(LOGS_DIR, "wrds_collection.log")
 
 # Schema must match all existing parquet files
 STRICT_SCHEMA = pa.schema([
