@@ -1,6 +1,21 @@
 {
-    "timestamp": "2026-05-04T20:40:33.379652+00:00",
+    "timestamp": "2026-05-07T20:39:30.167920+00:00",
     "baskets": {
+        "ABBV_AMGN_CVS_Spread": {
+            "tickers": [
+                "ABBV",
+                "AMGN",
+                "CVS"
+            ],
+            "weights": {
+                "ABBV": 1.0,
+                "AMGN": 0.8808256473449013,
+                "CVS": -1.1794607476334338
+            },
+            "half_life": 0.7355860915414408,
+            "last_seen": "2026-05-07T20:39:30.167920+00:00",
+            "capital_allocation": 0.3333
+        },
         "BAC_JPM_Spread": {
             "tickers": [
                 "BAC",
@@ -8,11 +23,11 @@
             ],
             "weights": {
                 "BAC": 1.0,
-                "JPM": -0.22556056703810662
+                "JPM": -0.22059643340839566
             },
-            "half_life": 0.6962209713711166,
-            "last_seen": "2026-05-04T20:40:33.379652+00:00",
-            "capital_allocation": 0.25
+            "half_life": 0.5451305442188168,
+            "last_seen": "2026-05-07T20:39:30.167920+00:00",
+            "capital_allocation": 0.3333
         },
         "BLK_XLY_Spread": {
             "tickers": [
@@ -21,50 +36,20 @@
             ],
             "weights": {
                 "BLK": 1.0,
-                "XLY": -0.5738913477792484
+                "XLY": -2.508324956700821
             },
-            "half_life": 0.739228121101406,
-            "last_seen": "2026-05-04T20:40:33.379652+00:00",
-            "capital_allocation": 0.25
-        },
-        "COST_WMT_Spread": {
-            "tickers": [
-                "COST",
-                "WMT"
-            ],
-            "weights": {
-                "COST": 1.0,
-                "WMT": -2.7892517124324243
-            },
-            "half_life": 2.280122000276294,
-            "last_seen": "2026-05-04T20:40:33.379652+00:00",
-            "capital_allocation": 0.25
-        },
-        "HD_HON_LOW_Spread": {
-            "tickers": [
-                "HD",
-                "HON",
-                "LOW"
-            ],
-            "weights": {
-                "HD": 1.0,
-                "HON": 0.5945531789697719,
-                "LOW": -0.9531055955076779
-            },
-            "half_life": 0.2983204281044164,
-            "last_seen": "2026-05-04T20:40:33.379652+00:00",
-            "capital_allocation": 0.25
+            "half_life": 0.7749475604362697,
+            "last_seen": "2026-05-07T20:39:30.167920+00:00",
+            "capital_allocation": 0.3333
         }
     },
     "flat_list": [
+        "BAC",
         "JPM",
-        "XLY",
-        "COST",
-        "WMT",
-        "HON",
+        "AMGN",
+        "ABBV",
         "BLK",
-        "LOW",
-        "HD",
-        "BAC"
+        "CVS",
+        "XLY"
     ]
 }
