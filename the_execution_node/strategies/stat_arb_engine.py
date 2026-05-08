@@ -6,9 +6,9 @@ import xgboost as xgb
 from the_research_node.m1_xgboost_trainer import apply_frac_diff, find_optimal_d
 
 from the_utilities.strategy_config import (
-    Z_THRESH, AI_THRESH, PT_SKEW, SL_SKEW, TIME_BARRIER, LEVERAGE,
-    CUSUM_REGIME_THRESHOLD
+    Z_THRESH, AI_THRESH, PT_SKEW, SL_SKEW, TIME_BARRIER, LEVERAGE
 )
+from the_utilities.regime_filter import check_regime_safe_now
 from the_utilities.paths import (
     MODELS_DIR, CURATED_UNIVERSE_JSON, ACTIVE_MODEL_VERSION,
     META_LABELER_JSON, RAW_MACRO_CSV
@@ -29,44 +29,6 @@ def _load_meta_labeler():
     model.load_model(model_path)
     return model
 
-
-def check_regime_safe(threshold: float = 0.02):
-    # CUSUM regime filter on daily SPY returns from the macro CSV
-    # Returns False if a structural break was detected on the most recent day
-    try:
-        macro_df = pd.read_csv(RAW_MACRO_CSV, index_col='Date', parse_dates=True)
-    except Exception as e:
-        print(f"[SHIELD] Could not load {RAW_MACRO_CSV}: {e}. Defaulting to SAFE.")
-        return True
-
-    if 'SPY' not in macro_df.columns:
-        print("[SHIELD] SPY column missing from macro CSV. Defaulting to SAFE.")
-        return True
-
-    returns = macro_df['SPY'].pct_change().dropna()
-
-    if len(returns) < 10:
-        return True
-
-    # Run CUSUM on full daily history — only the final state matters
-    pos_cusum = 0.0
-    neg_cusum = 0.0
-    regime_safe = True
-
-    for ret in returns.values:
-        pos_cusum = max(0, pos_cusum + ret)
-        neg_cusum = min(0, neg_cusum + ret)
-
-        if pos_cusum > threshold or neg_cusum < -threshold:
-            regime_safe = False
-            pos_cusum = 0.0
-            neg_cusum = 0.0
-        else:
-            regime_safe = True
-
-    return regime_safe
-
-
 def generate_signals(live_matrix: pd.DataFrame):
     # Evaluate all active spreads and return filtered entry signals
     # Returns active_signals dict and spread_returns DataFrame
@@ -79,8 +41,8 @@ def generate_signals(live_matrix: pd.DataFrame):
         print("[CRITICAL] curated_universe.json not found.")
         return {}, pd.DataFrame()
 
-    # 2. CUSUM macro regime filter — blocks ALL entries during structural breaks
-    regime_safe = check_regime_safe()
+    # 2. CUSUM macro regime filter — blocks entries until N consecutive safe days post-break
+    regime_safe = check_regime_safe_now()
     if not regime_safe:
         print("[SHIELD] CUSUM regime break detected on SPY. Blocking all new entries.")
         return {}, pd.DataFrame()
