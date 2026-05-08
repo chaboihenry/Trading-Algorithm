@@ -137,7 +137,7 @@ class ExecutionOrchestrator:
                 del self.open_positions[spread_name]
                 self.cooldown_tracker[spread_name] = datetime.now()
                 self._save_position_state()
-                self.logger.info(f"[CLOSED] {spread_name} successfully. Cooldown: {self.COOLDOWN_MINUTES}min")
+                self.logger.info(f"[CLOSED] {spread_name} successfully. Cooldown: {COOLDOWN_MINUTES}min")
             elif reason in ("basket_removed", "missing_legs", "invalid_position"):
                 # Nothing to close in Alpaca — purge the phantom from state
                 del self.open_positions[spread_name]
@@ -164,9 +164,14 @@ class ExecutionOrchestrator:
                 continue
             
             # Skip if the spread is on cooldown
-            last_exit = self.cooldown_tracker.get(spread_name)
-            if last_exit and (datetime.now() - last_exit) < timedelta(minutes=COOLDOWN_MINUTES):
-                continue
+            now = datetime.now()
+            current_minutes = now.hour * 60 + now.minute
+            in_eod_window = current_minutes >= EOD_COOLDOWN_SKIP_MINUTES
+
+            if not in_eod_window:
+                last_exit = self.cooldown_tracker.get(spread_name)
+                if last_exit and (now - last_exit) < timedelta(minutes=COOLDOWN_MINUTES):
+                    continue
 
             target_pos = signal_data['target_position']
             z_score = signal_data['current_z']
