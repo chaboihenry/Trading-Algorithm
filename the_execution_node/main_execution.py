@@ -187,7 +187,7 @@ class ExecutionOrchestrator:
             if success:
                 # Track the position with all metadata for exit evaluation
                 self.open_positions[spread_name] = signal_data
-                self.open_positions[spread_name]['bars_held'] = 0
+                self.open_positions[spread_name]['bars_held'] = -1
                 self.open_positions[spread_name]['entry_time'] = datetime.now().isoformat()
                 self._save_position_state()
 
