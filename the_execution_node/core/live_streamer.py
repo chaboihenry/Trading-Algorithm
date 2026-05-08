@@ -1,6 +1,7 @@
 import os
 import json
 import asyncio
+import threading
 import pandas as pd
 from datetime import datetime
 from alpaca_trade_api.stream import Stream
@@ -15,14 +16,13 @@ class LiveStreamer:
         self.secret_key = secret_key
         self.base_url = base_url
         
-        # 1. Initialize the rolling window for live prices
         self.live_matrix = pd.DataFrame()
+        self._matrix_lock = threading.Lock()
         self.active_tickers = []
         
-        # 2. Load the universe immediately upon initialization (Will crash if missing)
         self._load_universe()
         
-        # 3. Initialize the Alpaca Stream with Free Tier compliance
+        # Initialize the Alpaca Stream with Free Tier compliance
         self.stream = Stream(
             self.api_key,
             self.secret_key,
@@ -42,28 +42,21 @@ class LiveStreamer:
         self.live_matrix = pd.DataFrame(columns=self.active_tickers)
 
     async def _handle_bar(self, bar):
-        # Callback function executed every time a new 1-minute bar arrives
         ticker = bar.symbol
         price = bar.close
         timestamp = bar.timestamp
-        
-        # 1. Update the live matrix with the new timestamp if it doesn't exist
-        if timestamp not in self.live_matrix.index:
-            self.live_matrix.loc[timestamp] = None
-            
-        self.live_matrix.at[timestamp, ticker] = price
-        
-        # 2. Forward fill to handle missing ticks across the basket, then drop NAs
-        self.live_matrix = self.live_matrix.ffill()
-        
-        # 3. Memory Management: Keep only the last 200 bars (intraday rolling window)
-        if len(self.live_matrix) > 200:
-            self.live_matrix = self.live_matrix.tail(200)
+    
+        with self._matrix_lock:
+            if timestamp not in self.live_matrix.index:
+                self.live_matrix.loc[timestamp] = None
+            self.live_matrix.at[timestamp, ticker] = price
+            self.live_matrix = self.live_matrix.ffill()
+            if len(self.live_matrix) > 200:
+                self.live_matrix = self.live_matrix.tail(200)
 
     def get_latest_matrix(self) -> pd.DataFrame:
-        # Returns a clean, safely copied snapshot of the current live matrix
-        # Drop rows that don't have a complete set of prices yet
-        return self.live_matrix.dropna().copy()
+        with self._matrix_lock:
+            return self.live_matrix.dropna().copy()
 
     def start_streaming(self):
         # Subscribes to the tickers and starts the infinite async loop.

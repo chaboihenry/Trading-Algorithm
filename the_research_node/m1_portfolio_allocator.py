@@ -79,7 +79,7 @@ def run_hrp_allocation():
 
     spread_returns = {}
 
-    # 1. Reconstruct historical returns for each active spread
+    # Reconstruct historical returns for each active spread
     for name, data in baskets.items():
         tickers = data['tickers']
         weights = data['weights']
@@ -127,7 +127,7 @@ def run_hrp_allocation():
         print("[ERROR] Insufficient spread return data for HRP calculation.")
         return
 
-    # 2. Build Covariance Matrix of the Spreads safely
+    # Build Covariance Matrix of the Spreads safely
     returns_df = pd.DataFrame(spread_returns)
     
     # Forward fill missing days across spreads, then drop the initial NaN rows
@@ -144,7 +144,7 @@ def run_hrp_allocation():
         cov, corr = returns_df.cov(), returns_df.corr()
         print(f"Calculating HRP allocation for {len(returns_df.columns)} active strategies...")
 
-        # 3. Apply Hierarchical Risk Parity
+        # Apply Hierarchical Risk Parity
         dist = correl_dist(corr)
         dist_array = squareform(dist.values, checks=False) 
         link = sch.linkage(dist_array, 'single')
@@ -155,28 +155,34 @@ def run_hrp_allocation():
         cov = cov.loc[sort_ix, sort_ix]
         hrp_weights = get_rec_bipart(cov, sort_ix)
 
-        # 4. Apply concentration cap — iteratively clamp + renormalize until all weights <= MAX_CAP
-        # This prevents HRP from dumping 86% of capital into a single degenerate spread
-        MAX_CAP = 0.25
+        for _ in range(50):
+            over_cap = hrp_weights[hrp_weights > HRP_MAX_CAP]
+            if not over_cap.empty:
+                excess = (over_cap - HRP_MAX_CAP).sum()
+                hrp_weights[hrp_weights > HRP_MAX_CAP] = HRP_MAX_CAP
+                under_cap_mask = hrp_weights < HRP_MAX_CAP
+                if under_cap_mask.sum() > 0:
+                    redistribution = hrp_weights[under_cap_mask] / hrp_weights[under_cap_mask].sum()
+                    hrp_weights[under_cap_mask] += excess * redistribution
 
-        for _ in range(20):  # iterative rebalance, usually converges in 2-3 passes
-            over_cap = hrp_weights[hrp_weights > MAX_CAP]
-            if over_cap.empty:
-                break
-            # Clamp the over-cap weights and redistribute the excess to the under-cap weights
-            excess = (over_cap - MAX_CAP).sum()
-            hrp_weights[hrp_weights > MAX_CAP] = MAX_CAP
-            under_cap_mask = hrp_weights < MAX_CAP
-            if under_cap_mask.sum() == 0:
-                break
-            redistribution = hrp_weights[under_cap_mask] / hrp_weights[under_cap_mask].sum()
-            hrp_weights[under_cap_mask] += excess * redistribution
+            below_floor = hrp_weights[hrp_weights < HRP_MIN_FLOOR]
+            if not below_floor.empty:
+                deficit = (HRP_MIN_FLOOR - below_floor).sum()
+                hrp_weights[hrp_weights < HRP_MIN_FLOOR] = HRP_MIN_FLOOR
+                above_floor_mask = hrp_weights > HRP_MIN_FLOOR
+                if above_floor_mask.sum() > 0:
+                    above_floor_sum = hrp_weights[above_floor_mask].sum()
+                    hrp_weights[above_floor_mask] -= deficit * (hrp_weights[above_floor_mask] / above_floor_sum)
 
-        # Final normalization to guarantee sum-to-1 (rounding errors can accumulate)
+            cap_ok = hrp_weights[hrp_weights > HRP_MAX_CAP].empty
+            floor_ok = hrp_weights[hrp_weights < HRP_MIN_FLOOR].empty
+            if cap_ok and floor_ok:
+                break
+
         hrp_weights = hrp_weights / hrp_weights.sum()
-        print(f"[HRP CAP] Applied {MAX_CAP*100:.0f}% max allocation cap.")
+        print(f"[HRP] Applied {HRP_MAX_CAP*100:.0f}% cap and {HRP_MIN_FLOOR*100:.0f}% floor.")
 
-        # 5. Inject allocations back into the JSON payload
+        # Inject allocations back into the JSON payload
         for name in baskets:
             if name in hrp_weights:
                 baskets[name]['capital_allocation'] = round(float(hrp_weights[name]), 4)
