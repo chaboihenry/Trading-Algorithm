@@ -18,6 +18,7 @@ from the_utilities.strategy_config import (
 )
 from the_utilities.paths import LOGS_DIR, EXECUTION_LOG, OPEN_POSITIONS_JSON
 
+
 class ExecutionOrchestrator:
     MIN_BUFFER = 50
     EVAL_INTERVAL = 60
@@ -36,7 +37,7 @@ class ExecutionOrchestrator:
         # Position tracking: spread_name -> position metadata from stat_arb_engine
         self.open_positions = {}
 
-        # Cooldwown tracking: spread_name -> cooldown expiry timestamp
+        # Cooldown tracking: spread_name -> cooldown expiry timestamp
         self.cooldown_tracker = {}
 
         self.streamer = None
@@ -99,7 +100,7 @@ class ExecutionOrchestrator:
         current_minutes = now.hour * 60 + now.minute
         start_min, end_min = SAFE_ENTRY_WINDOW
         return start_min <= current_minutes <= end_min
-    
+
     def _force_eod_liquidation(self):
         now = datetime.now()
         current_minutes = now.hour * 60 + now.minute
@@ -112,7 +113,8 @@ class ExecutionOrchestrator:
             pos_data = self.open_positions.get(spread_name, {})
             weights = pos_data.get('johansen_weights', {})
 
-            if self.router.close_spread(spread_name, weights, "eod_liquidation"):
+            # Pass position_data so close_spread can write a complete row to trade_history.csv
+            if self.router.close_spread(spread_name, weights, "eod_liquidation", position_data=pos_data):
                 del self.open_positions[spread_name]
                 self.cooldown_tracker[spread_name] = datetime.now()
                 self._save_position_state()
@@ -133,13 +135,14 @@ class ExecutionOrchestrator:
 
             self.logger.info(f"[EXIT] {spread_name} | Reason: {reason}")
 
-            if self.router.close_spread(spread_name, weights, reason):
+            # Pass position_data so close_spread can write a complete row to trade_history.csv
+            if self.router.close_spread(spread_name, weights, reason, position_data=pos_data):
                 del self.open_positions[spread_name]
                 self.cooldown_tracker[spread_name] = datetime.now()
                 self._save_position_state()
                 self.logger.info(f"[CLOSED] {spread_name} successfully. Cooldown: {COOLDOWN_MINUTES}min")
             elif reason in ("basket_removed", "missing_legs", "invalid_position"):
-                # Nothing to close in Alpaca — purge the phantom from state
+                # Nothing to close in Alpaca — purge the phantom from state (no log entry)
                 del self.open_positions[spread_name]
                 self._save_position_state()
                 self.logger.info(f"[PURGED] {spread_name} removed from state (not held in Alpaca).")
@@ -162,7 +165,7 @@ class ExecutionOrchestrator:
             # Skip if already holding this spread
             if spread_name in open_spread_names:
                 continue
-            
+
             # Skip if the spread is on cooldown
             now = datetime.now()
             current_minutes = now.hour * 60 + now.minute
@@ -184,16 +187,22 @@ class ExecutionOrchestrator:
                 f"Z={z_score:.2f} | AI={ai_conf:.3f} | Bet={bet_size:.3f}"
             )
 
-            # Route through order router
-            success = self.router.execute_spread(
+            # Route through order router — returns a dict with fill data on success
+            result = self.router.execute_spread(
                 spread_name, signal_data, matrix, open_spread_names
             )
 
-            if success:
-                # Track the position with all metadata for exit evaluation
+            if result and result.get("success"):
+                # Store the position with everything needed for exit logging:
+                # signal_data fields (target_position, ai_confidence, bet_size, current_z, johansen_weights)
+                # plus bars_held, entry_timestamp, entry_z, entry_prices, leg_shares
                 self.open_positions[spread_name] = signal_data
                 self.open_positions[spread_name]['bars_held'] = -1
-                self.open_positions[spread_name]['entry_time'] = datetime.now().isoformat()
+                self.open_positions[spread_name]['entry_timestamp'] = datetime.now().isoformat()
+                # Snapshot z at entry — current_z gets overwritten later, entry_z is permanent
+                self.open_positions[spread_name]['entry_z'] = signal_data.get('current_z', 0.0)
+                self.open_positions[spread_name]['entry_prices'] = result.get('entry_prices', {})
+                self.open_positions[spread_name]['leg_shares'] = result.get('leg_shares', {})
                 self._save_position_state()
 
                 self.logger.info(f"[ENTERED] {spread_name} | {action}")
