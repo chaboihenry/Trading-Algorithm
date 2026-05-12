@@ -1,10 +1,13 @@
 import os
 import math
 import json
+import logging
 import pandas as pd
 from alpaca_trade_api.rest import REST
 
 from the_utilities.strategy_config import LEVERAGE, SLIPPAGE_BPS_LIVE, HEDGE_RATIO_MIN
+
+logger = logging.getLogger(__name__)
 
 
 class OrderRouter:
@@ -13,8 +16,9 @@ class OrderRouter:
 
     SLIPPAGE_BPS = SLIPPAGE_BPS_LIVE
 
-    def __init__(self, api_key: str, secret_key: str, base_url: str):
+    def __init__(self, api_key: str, secret_key: str, base_url: str, logger=None):
         self.api = REST(api_key, secret_key, base_url)
+        self.logger = logger if logger is not None else logging.getLogger(__name__)
 
     def get_account_metrics(self):
         # Fetches live account equity and buying power
@@ -27,7 +31,7 @@ class OrderRouter:
             positions = self.api.list_positions()
             return {p.symbol for p in positions}
         except Exception as e:
-            print(f"[WARNING] Could not fetch positions: {e}")
+            self.logger.warning(f"[WARNING] Could not fetch positions: {e}")
             return set()
 
     def execute_spread(self, spread_name: str, signal_data: dict, live_matrix: pd.DataFrame, open_spreads: set):
@@ -37,7 +41,7 @@ class OrderRouter:
 
         # 1. Block duplicate entries — never stack positions on the same spread
         if spread_name in open_spreads:
-            print(f"[ROUTER] Blocked {spread_name}: already holding this spread.")
+            self.logger.warning(f"[ROUTER] Blocked {spread_name}: already holding this spread.")
             return {"success": False}
 
         equity, buying_power = self.get_account_metrics()
@@ -48,7 +52,7 @@ class OrderRouter:
         bet_size = signal_data.get('bet_size', 0.5)
 
         if target_pos == 0 or not weights:
-            print(f"[WARNING] No actionable signal for {spread_name}.")
+            self.logger.warning(f"[WARNING] No actionable signal for {spread_name}.")
             return {"success": False}
 
         # 2. Calculate capital for this spread using HRP allocation and Half-Kelly
@@ -56,18 +60,22 @@ class OrderRouter:
 
         # Shield: block if insufficient buying power
         if spread_capital > buying_power:
-            print(f"[SHIELD] Blocked {spread_name}: "
-                  f"Required ${spread_capital:.2f}, Available ${buying_power:.2f}")
+            self.logger.warning(
+                f"[SHIELD] Blocked {spread_name}: "
+                f"Required ${spread_capital:.2f}, Available ${buying_power:.2f}"
+            )
             return {"success": False}
 
-        print(f"\n[ROUTER] Routing {spread_name} | "
-              f"Capital: ${spread_capital:.2f} | Bet Size: {bet_size:.3f}")
+        self.logger.info(
+            f"[ROUTER] Routing {spread_name} | "
+            f"Capital: ${spread_capital:.2f} | Bet Size: {bet_size:.3f}"
+        )
 
         # 3. Size each leg proportional to Johansen weight magnitudes
         # Normalize weights so their absolute values sum to 1
         abs_weight_sum = sum(abs(w) for w in weights.values())
         if abs_weight_sum == 0:
-            print(f"[WARNING] All weights are zero for {spread_name}.")
+            self.logger.warning(f"[WARNING] All weights are zero for {spread_name}.")
             return {"success": False}
 
         held_tickers = self.get_open_positions()
@@ -76,7 +84,7 @@ class OrderRouter:
         # Prevents log spam from spreads with high share prices and low allocation
         for ticker, weight in weights.items():
             if ticker not in live_matrix.columns or live_matrix.empty:
-                print(f"[ROUTER] Blocked {spread_name}: no live price for {ticker}.")
+                self.logger.warning(f"[ROUTER] Blocked {spread_name}: no live price for {ticker}.")
                 return {"success": False}
 
             price = live_matrix[ticker].iloc[-1]
@@ -87,8 +95,10 @@ class OrderRouter:
             leg_capital = spread_capital * weight_fraction
 
             if leg_capital < price:
-                print(f"[ROUTER] Blocked {spread_name}: "
-                      f"allocation ${spread_capital:.0f} can't buy 1 share of {ticker} (${price:.0f}).")
+                self.logger.warning(
+                    f"[ROUTER] Blocked {spread_name}: "
+                    f"allocation ${spread_capital:.0f} can't buy 1 share of {ticker} (${price:.0f})."
+                )
                 return {"success": False}
 
         # Pre-check: reject degenerate spreads where one leg barely hedges the other
@@ -108,8 +118,10 @@ class OrderRouter:
             max_leg = max(leg_notionals)
             if max_leg > 0 and (min_leg / max_leg) < HEDGE_RATIO_MIN:
                 hedge_ratio_pct = 100 * min_leg / max_leg
-                print(f"[ROUTER] Blocked {spread_name}: "
-                      f"degenerate hedge (smallest leg is {hedge_ratio_pct:.1f}% of largest).")
+                self.logger.warning(
+                    f"[ROUTER] Blocked {spread_name}: "
+                    f"degenerate hedge (smallest leg is {hedge_ratio_pct:.1f}% of largest)."
+                )
                 return {"success": False}
 
         # Pre-check: verify every short leg is actually shortable on Alpaca
@@ -120,10 +132,12 @@ class OrderRouter:
                 try:
                     asset = self.api.get_asset(ticker)
                     if not asset.shortable:
-                        print(f"[ROUTER] Blocked {spread_name}: {ticker} is not shortable.")
+                        self.logger.warning(f"[ROUTER] Blocked {spread_name}: {ticker} is not shortable.")
                         return {"success": False}
                 except Exception as e:
-                    print(f"[ROUTER] Blocked {spread_name}: could not verify {ticker} shortability ({e}).")
+                    self.logger.warning(
+                        f"[ROUTER] Blocked {spread_name}: could not verify {ticker} shortability ({e})."
+                    )
                     return {"success": False}
 
         # 4. Execute each leg and track entry prices/shares for P&L logging
@@ -136,16 +150,16 @@ class OrderRouter:
         for ticker, weight in weights.items():
             # Skip if ticker is already held in another position to avoid conflicts
             if ticker in held_tickers:
-                print(f"[WARNING] Already holding {ticker}. Skipping to avoid conflict.")
+                self.logger.warning(f"[WARNING] Already holding {ticker}. Skipping to avoid conflict.")
                 continue
 
             if ticker not in live_matrix.columns or live_matrix.empty:
-                print(f"[WARNING] No live price for {ticker}. Skipping leg.")
+                self.logger.warning(f"[WARNING] No live price for {ticker}. Skipping leg.")
                 continue
 
             price = live_matrix[ticker].iloc[-1]
             if pd.isna(price) or price <= 0:
-                print(f"[WARNING] Invalid live price for {ticker}. Skipping leg.")
+                self.logger.warning(f"[WARNING] Invalid live price for {ticker}. Skipping leg.")
                 continue
 
             # Capital for this leg proportional to its weight magnitude
@@ -160,8 +174,10 @@ class OrderRouter:
             qty = math.floor(leg_capital / price)
 
             if qty <= 0:
-                print(f"[WARNING] Insufficient capital for 1 share of {ticker} "
-                      f"(need ${price:.2f}, have ${leg_capital:.2f}).")
+                self.logger.warning(
+                    f"[WARNING] Insufficient capital for 1 share of {ticker} "
+                    f"(need ${price:.2f}, have ${leg_capital:.2f})."
+                )
                 continue
 
             try:
@@ -173,8 +189,10 @@ class OrderRouter:
                     time_in_force='day'
                 )
                 notional = qty * price
-                print(f"[EXECUTED] {side.upper()} {qty}x {ticker} "
-                      f"@ ~${price:.2f} (${notional:.2f}) | Order: {order.id}")
+                self.logger.info(
+                    f"[EXECUTED] {side.upper()} {qty}x {ticker} "
+                    f"@ ~${price:.2f} (${notional:.2f}) | Order: {order.id}"
+                )
 
                 # Record entry data for P&L logging at close
                 # Signed shares: positive for long, negative for short
@@ -183,15 +201,17 @@ class OrderRouter:
                 leg_shares[ticker] = signed_qty
                 executed_legs += 1
             except Exception as e:
-                print(f"[ERROR] Alpaca API rejected {ticker}: {e}")
+                self.logger.error(f"[ERROR] Alpaca API rejected {ticker}: {e}")
 
         # 5. Validate execution outcome
         if executed_legs == 0:
-            print(f"[CRITICAL] No legs executed for {spread_name}. Trade aborted.")
+            self.logger.error(f"[CRITICAL] No legs executed for {spread_name}. Trade aborted.")
             return {"success": False}
         elif executed_legs < total_legs:
-            print(f"[WARNING] Partial execution for {spread_name}: "
-                  f"{executed_legs}/{total_legs} legs filled. Hedge is incomplete.")
+            self.logger.warning(
+                f"[WARNING] Partial execution for {spread_name}: "
+                f"{executed_legs}/{total_legs} legs filled. Hedge is incomplete."
+            )
 
         return {
             "success": True,
@@ -205,7 +225,7 @@ class OrderRouter:
         from datetime import datetime
         from the_utilities.trade_logger import log_trade
 
-        print(f"\n[ROUTER] Closing {spread_name} | Reason: {reason}")
+        self.logger.info(f"[ROUTER] Closing {spread_name} | Reason: {reason}")
 
         held_tickers = self.get_open_positions()
         closed = 0
@@ -219,7 +239,7 @@ class OrderRouter:
                 quote = self.api.get_latest_trade(ticker)
                 exit_prices[ticker] = float(quote.price)
             except Exception as e:
-                print(f"[WARNING] Could not fetch exit price for {ticker}: {e}")
+                self.logger.warning(f"[WARNING] Could not fetch exit price for {ticker}: {e}")
                 exit_prices[ticker] = 0.0
 
         # Submit close orders
@@ -228,13 +248,13 @@ class OrderRouter:
                 continue
             try:
                 self.api.close_position(ticker)
-                print(f"[CLOSED] {ticker}")
+                self.logger.info(f"[CLOSED] {ticker}")
                 closed += 1
             except Exception as e:
-                print(f"[ERROR] Failed to close {ticker}: {e}")
+                self.logger.error(f"[ERROR] Failed to close {ticker}: {e}")
 
         if closed == 0:
-            print(f"[INFO] No positions found to close for {spread_name}.")
+            self.logger.info(f"[INFO] No positions found to close for {spread_name}.")
             return False
 
         # Log trade only if full metadata from caller is available
@@ -289,25 +309,30 @@ class OrderRouter:
         # Emergency cleanup — cancels every pending order in the account
         try:
             self.api.cancel_all_orders()
-            print("[ROUTER] All open orders cancelled.")
+            self.logger.info("[ROUTER] All open orders cancelled.")
         except Exception as e:
-            print(f"[ERROR] Failed to cancel orders: {e}")
+            self.logger.error(f"[ERROR] Failed to cancel orders: {e}")
 
     def emergency_liquidate(self):
         # Nuclear option — closes every position and cancels every order
-        print("[EMERGENCY] Liquidating all positions and cancelling all orders...")
+        self.logger.warning("[EMERGENCY] Liquidating all positions and cancelling all orders...")
         self.cancel_all_open_orders()
         try:
             self.api.close_all_positions()
-            print("[EMERGENCY] All positions closed.")
+            self.logger.warning("[EMERGENCY] All positions closed.")
         except Exception as e:
-            print(f"[ERROR] Emergency liquidation failed: {e}")
+            self.logger.error(f"[ERROR] Emergency liquidation failed: {e}")
 
 
 if __name__ == "__main__":
     from dotenv import load_dotenv
 
-    print("\n====== EXECUTION NODE DIAGNOSTIC: ORDER ROUTER ======")
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+
+    logger.info("====== EXECUTION NODE DIAGNOSTIC: ORDER ROUTER ======")
 
     load_dotenv()
     API_KEY = os.getenv("ALPACA_API_KEY")
@@ -315,24 +340,24 @@ if __name__ == "__main__":
     BASE_URL = os.getenv("ALPACA_API_BASE_URL", "https://paper-api.alpaca.markets")
 
     if not API_KEY or not SECRET_KEY:
-        print("[CRITICAL] Alpaca API keys not found in .env file.")
+        logger.error("[CRITICAL] Alpaca API keys not found in .env file.")
         exit(1)
 
-    print("[SYSTEM] Environment variables loaded. Connecting to Alpaca...")
+    logger.info("[SYSTEM] Environment variables loaded. Connecting to Alpaca...")
 
     router = OrderRouter(API_KEY, SECRET_KEY, BASE_URL)
 
     try:
         equity, bp = router.get_account_metrics()
-        print(f"[SUCCESS] Connected to Alpaca.")
-        print(f"Account Equity: ${equity:.2f}")
-        print(f"Buying Power:   ${bp:.2f}")
+        logger.info(f"[SUCCESS] Connected to Alpaca.")
+        logger.info(f"Account Equity: ${equity:.2f}")
+        logger.info(f"Buying Power:   ${bp:.2f}")
 
         positions = router.get_open_positions()
-        print(f"Open Positions: {positions if positions else 'None'}")
+        logger.info(f"Open Positions: {positions if positions else 'None'}")
 
         # Diagnostic: submit a safe out-of-the-money limit order
-        print("\n[SYSTEM] Testing LONG mechanics (Buy 1 AAPL @ $1.00 Limit)...")
+        logger.info("[SYSTEM] Testing LONG mechanics (Buy 1 AAPL @ $1.00 Limit)...")
         long_order = router.api.submit_order(
             symbol='AAPL',
             qty=1,
@@ -341,9 +366,9 @@ if __name__ == "__main__":
             time_in_force='day',
             limit_price=1.00
         )
-        print(f"[SUCCESS] LONG order routed. ID: {long_order.id}")
+        logger.info(f"[SUCCESS] LONG order routed. ID: {long_order.id}")
 
-        print("\n[SYSTEM] Testing SHORT mechanics (Sell 1 MSFT @ $5000.00 Limit)...")
+        logger.info("[SYSTEM] Testing SHORT mechanics (Sell 1 MSFT @ $5000.00 Limit)...")
         short_order = router.api.submit_order(
             symbol='MSFT',
             qty=1,
@@ -352,13 +377,13 @@ if __name__ == "__main__":
             time_in_force='day',
             limit_price=5000.00
         )
-        print(f"[SUCCESS] SHORT order routed. ID: {short_order.id}")
+        logger.info(f"[SUCCESS] SHORT order routed. ID: {short_order.id}")
 
         # Clean up diagnostic orders
-        print("\n[SYSTEM] Cancelling diagnostic orders...")
+        logger.info("[SYSTEM] Cancelling diagnostic orders...")
         router.cancel_all_open_orders()
 
-        print("\n====== DIAGNOSTIC COMPLETE ======")
+        logger.info("====== DIAGNOSTIC COMPLETE ======")
 
     except Exception as e:
-        print(f"\n[CRITICAL FAILURE] Connection or Routing failed: {e}")
+        logger.error(f"[CRITICAL FAILURE] Connection or Routing failed: {e}")

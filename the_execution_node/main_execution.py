@@ -32,7 +32,7 @@ class ExecutionOrchestrator:
         self.secret_key = os.getenv("ALPACA_API_SECRET")
         self.base_url = os.getenv("ALPACA_API_BASE_URL", "https://paper-api.alpaca.markets")
 
-        self.router = OrderRouter(self.api_key, self.secret_key, self.base_url)
+        self.router = OrderRouter(self.api_key, self.secret_key, self.base_url, logger=self.logger)
 
         # Position tracking: spread_name -> position metadata from stat_arb_engine
         self.open_positions = {}
@@ -51,15 +51,17 @@ class ExecutionOrchestrator:
         self.logger.setLevel(logging.INFO)
 
         if not self.logger.handlers:
+            formatter = logging.Formatter(
+                '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+            )
+
             # Terminal
             console_handler = logging.StreamHandler()
-            console_format = logging.Formatter('%(levelname)s: %(message)s')
-            console_handler.setFormatter(console_format)
+            console_handler.setFormatter(formatter)
 
             # File (max 5MB, keeps last 5 backups)
             file_handler = RotatingFileHandler(log_file, maxBytes=5*1024*1024, backupCount=5)
-            file_format = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-            file_handler.setFormatter(file_format)
+            file_handler.setFormatter(formatter)
 
             self.logger.addHandler(console_handler)
             self.logger.addHandler(file_handler)
@@ -223,7 +225,7 @@ class ExecutionOrchestrator:
 
         # Start the live data stream
         self.streamer = LiveStreamer(
-            self.api_key, self.secret_key, self.base_url
+            self.api_key, self.secret_key, self.base_url, logger=self.logger
         )
         stream_thread = threading.Thread(target=self.streamer.start_streaming, daemon=True)
         stream_thread.start()
