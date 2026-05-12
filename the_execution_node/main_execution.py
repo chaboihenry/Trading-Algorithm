@@ -209,6 +209,86 @@ class ExecutionOrchestrator:
 
                 self.logger.info(f"[ENTERED] {spread_name} | {action}")
 
+    def reconcile_state_with_broker(self) -> dict:
+        # One-shot startup check: align open_positions.json with Alpaca's actual holdings.
+        # Orphan positions (Alpaca holds, local doesn't know) are flattened immediately.
+        # Phantom spreads (local state claims open, Alpaca disagrees) are purged from the JSON.
+
+        # --- Broker state ---
+        try:
+            alpaca_positions = self.router.api.list_positions()
+        except Exception as e:
+            self.logger.error(f"[RECONCILE] Could not fetch Alpaca positions: {e}")
+            raise
+
+        alpaca_by_ticker = {p.symbol: p for p in alpaca_positions}
+        alpaca_tickers = set(alpaca_by_ticker)
+
+        # --- Local state (read file directly; self.open_positions not loaded yet) ---
+        local_state = {}
+        if os.path.exists(OPEN_POSITIONS_JSON):
+            try:
+                with open(OPEN_POSITIONS_JSON, "r") as f:
+                    local_state = json.load(f)
+            except Exception as e:
+                self.logger.warning(f"[RECONCILE] Could not read open_positions.json: {e}")
+
+        # Flatten every ticker referenced across all spreads
+        local_tickers = set()
+        for spread_data in local_state.values():
+            weights = spread_data.get("johansen_weights", {})
+            local_tickers.update(weights.keys())
+
+        in_both = alpaca_tickers & local_tickers
+        alpaca_only = alpaca_tickers - local_tickers
+        local_only = local_tickers - alpaca_tickers
+
+        if in_both:
+            self.logger.info(
+                f"[RECONCILE] {len(in_both)} ticker(s) confirmed in both broker and local state: "
+                f"{sorted(in_both)}"
+            )
+
+        # Flatten orphan positions — broker holds them, local state is unaware
+        for ticker in alpaca_only:
+            pos = alpaca_by_ticker[ticker]
+            self.logger.warning(
+                f"[RECONCILE] Orphan position: {ticker} | "
+                f"qty={pos.qty} | market_value=${float(pos.market_value):.2f} — flattening."
+            )
+            try:
+                self.router.api.close_position(ticker)
+            except Exception as e:
+                self.logger.error(f"[RECONCILE] Failed to flatten orphan {ticker}: {e}")
+
+        # Purge phantom spreads — any spread whose legs include a ticker Alpaca doesn't hold
+        spreads_to_remove = [
+            spread_name
+            for spread_name, spread_data in local_state.items()
+            if set(spread_data.get("johansen_weights", {}).keys()) & local_only
+        ]
+
+        for spread_name in spreads_to_remove:
+            missing = set(local_state[spread_name].get("johansen_weights", {}).keys()) & local_only
+            self.logger.warning(
+                f"[RECONCILE] Phantom spread purged: {spread_name} | "
+                f"missing legs: {sorted(missing)}"
+            )
+            del local_state[spread_name]
+
+        if spreads_to_remove:
+            try:
+                with open(OPEN_POSITIONS_JSON, "w") as f:
+                    json.dump(local_state, f, indent=4, default=str)
+            except Exception as e:
+                self.logger.error(f"[RECONCILE] Failed to rewrite open_positions.json: {e}")
+
+        return {
+            "in_both": len(in_both),
+            "alpaca_only_flattened": len(alpaca_only),
+            "local_only_removed": len(spreads_to_remove),
+        }
+
     def _increment_bars_held(self):
         # Tick the bar counter for all open positions each evaluation cycle
         for spread_name in self.open_positions:
@@ -293,6 +373,17 @@ class ExecutionOrchestrator:
             self.logger.info(f"Account Equity: ${equity:.2f} | Buying Power: ${bp:.2f}")
         except Exception as e:
             self.logger.error(f"Could not fetch account metrics: {e}")
+
+        # Reconcile local state with broker before any trading begins
+        try:
+            summary = self.reconcile_state_with_broker()
+            self.logger.info(f"[RECONCILE] Startup reconciliation complete: {summary}")
+        except Exception as e:
+            self.logger.critical(
+                f"[RECONCILE] Reconciliation failed — cannot start daemon safely: {e}",
+                exc_info=True
+            )
+            raise
 
         while True:
             try:
