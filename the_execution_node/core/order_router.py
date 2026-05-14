@@ -42,7 +42,7 @@ class OrderRouter:
         # 1. Block duplicate entries — never stack positions on the same spread
         if spread_name in open_spreads:
             self.logger.warning(f"[ROUTER] Blocked {spread_name}: already holding this spread.")
-            return {"success": False}
+            return {"success": False, "reason": "duplicate_spread"}
 
         equity, buying_power = self.get_account_metrics()
 
@@ -53,7 +53,7 @@ class OrderRouter:
 
         if target_pos == 0 or not weights:
             self.logger.warning(f"[WARNING] No actionable signal for {spread_name}.")
-            return {"success": False}
+            return {"success": False, "reason": "no_signal"}
 
         # 2. Calculate capital for this spread using HRP allocation and Half-Kelly
         spread_capital = equity * allocation * bet_size * LEVERAGE
@@ -64,7 +64,7 @@ class OrderRouter:
                 f"[SHIELD] Blocked {spread_name}: "
                 f"Required ${spread_capital:.2f}, Available ${buying_power:.2f}"
             )
-            return {"success": False}
+            return {"success": False, "reason": "insufficient_capital"}
 
         self.logger.info(
             f"[ROUTER] Routing {spread_name} | "
@@ -76,43 +76,68 @@ class OrderRouter:
         abs_weight_sum = sum(abs(w) for w in weights.values())
         if abs_weight_sum == 0:
             self.logger.warning(f"[WARNING] All weights are zero for {spread_name}.")
-            return {"success": False}
+            return {"success": False, "reason": "zero_weights"}
+
+        # ── Phase 1: pre-flight validation (no orders submitted) ──────────────
+        # Every leg must pass every check before any order is submitted.
+        # A single failure rejects the entire basket to preserve market neutrality.
 
         held_tickers = self.get_open_positions()
+        leg_notionals = []  # accumulated for degenerate-hedge check below
 
-        # Pre-check: verify at least 1 share of every leg is affordable
-        # Prevents log spam from spreads with high share prices and low allocation
         for ticker, weight in weights.items():
+            # Live price must be present and valid
             if ticker not in live_matrix.columns or live_matrix.empty:
                 self.logger.warning(f"[ROUTER] Blocked {spread_name}: no live price for {ticker}.")
-                return {"success": False}
+                return {"success": False, "reason": f"no_price:{ticker}"}
 
             price = live_matrix[ticker].iloc[-1]
             if pd.isna(price) or price <= 0:
-                continue
+                self.logger.warning(f"[WARNING] Invalid live price for {ticker}. Skipping leg.")
+                return {"success": False, "reason": f"invalid_price:{ticker}"}
+
+            # Ticker must not already be held in any open Alpaca position
+            if ticker in held_tickers:
+                self.logger.warning(f"[WARNING] Already holding {ticker}. Skipping to avoid conflict.")
+                return {"success": False, "reason": f"already_held:{ticker}"}
 
             weight_fraction = abs(weight) / abs_weight_sum
             leg_capital = spread_capital * weight_fraction
 
+            # Must be able to afford at least 1 share
             if leg_capital < price:
                 self.logger.warning(
                     f"[ROUTER] Blocked {spread_name}: "
                     f"allocation ${spread_capital:.0f} can't buy 1 share of {ticker} (${price:.0f})."
                 )
-                return {"success": False}
+                return {"success": False, "reason": f"cant_afford:{ticker}"}
 
-        # Pre-check: reject degenerate spreads where one leg barely hedges the other
+            qty = math.floor(leg_capital / price)
+            if qty <= 0:
+                self.logger.warning(
+                    f"[WARNING] Insufficient capital for 1 share of {ticker} "
+                    f"(need ${price:.2f}, have ${leg_capital:.2f})."
+                )
+                return {"success": False, "reason": f"qty_zero:{ticker}"}
+
+            # Short legs must be shortable on Alpaca
+            # Prevents partial-fill unhedged exposure from non-shortable assets like SO
+            if target_pos * weight < 0:
+                try:
+                    asset = self.api.get_asset(ticker)
+                    if not asset.shortable:
+                        self.logger.warning(f"[ROUTER] Blocked {spread_name}: {ticker} is not shortable.")
+                        return {"success": False, "reason": f"not_shortable:{ticker}"}
+                except Exception as e:
+                    self.logger.warning(
+                        f"[ROUTER] Blocked {spread_name}: could not verify {ticker} shortability ({e})."
+                    )
+                    return {"success": False, "reason": f"shortability_check_failed:{ticker}"}
+
+            leg_notionals.append(leg_capital)
+
+        # Reject degenerate spreads where one leg barely hedges the other
         # A "hedge" with <HEDGE_RATIO_MIN of the largest leg is essentially a naked directional bet
-        leg_notionals = []
-        for ticker, weight in weights.items():
-            if ticker not in live_matrix.columns:
-                continue
-            price = live_matrix[ticker].iloc[-1]
-            if pd.isna(price) or price <= 0:
-                continue
-            wt_frac = abs(weight) / abs_weight_sum
-            leg_notionals.append(spread_capital * wt_frac)
-
         if leg_notionals:
             min_leg = min(leg_notionals)
             max_leg = max(leg_notionals)
@@ -122,63 +147,23 @@ class OrderRouter:
                     f"[ROUTER] Blocked {spread_name}: "
                     f"degenerate hedge (smallest leg is {hedge_ratio_pct:.1f}% of largest)."
                 )
-                return {"success": False}
+                return {"success": False, "reason": "degenerate_hedge"}
 
-        # Pre-check: verify every short leg is actually shortable on Alpaca
-        # Prevents partial-fill unhedged exposure from non-shortable assets like SO
-        for ticker, weight in weights.items():
-            trade_direction = target_pos * weight
-            if trade_direction < 0:  # This leg would be a short sale
-                try:
-                    asset = self.api.get_asset(ticker)
-                    if not asset.shortable:
-                        self.logger.warning(f"[ROUTER] Blocked {spread_name}: {ticker} is not shortable.")
-                        return {"success": False}
-                except Exception as e:
-                    self.logger.warning(
-                        f"[ROUTER] Blocked {spread_name}: could not verify {ticker} shortability ({e})."
-                    )
-                    return {"success": False}
+        # ── Phase 2: order submission ──────────────────────────────────────────
+        # All legs passed pre-flight. Submit every leg; no eligibility skips here.
 
-        # 4. Execute each leg and track entry prices/shares for P&L logging
-        # Only successfully filled legs are recorded — partial fills won't pollute analytics
         entry_prices = {}
         leg_shares = {}
         executed_legs = 0
         total_legs = len(weights)
 
         for ticker, weight in weights.items():
-            # Skip if ticker is already held in another position to avoid conflicts
-            if ticker in held_tickers:
-                self.logger.warning(f"[WARNING] Already holding {ticker}. Skipping to avoid conflict.")
-                continue
-
-            if ticker not in live_matrix.columns or live_matrix.empty:
-                self.logger.warning(f"[WARNING] No live price for {ticker}. Skipping leg.")
-                continue
-
             price = live_matrix[ticker].iloc[-1]
-            if pd.isna(price) or price <= 0:
-                self.logger.warning(f"[WARNING] Invalid live price for {ticker}. Skipping leg.")
-                continue
-
-            # Capital for this leg proportional to its weight magnitude
             weight_fraction = abs(weight) / abs_weight_sum
             leg_capital = spread_capital * weight_fraction
-
-            # Direction: target_pos (1/-1) * johansen weight sign
             trade_direction = target_pos * weight
             side = 'buy' if trade_direction > 0 else 'sell'
-
-            # Floor to integer shares
             qty = math.floor(leg_capital / price)
-
-            if qty <= 0:
-                self.logger.warning(
-                    f"[WARNING] Insufficient capital for 1 share of {ticker} "
-                    f"(need ${price:.2f}, have ${leg_capital:.2f})."
-                )
-                continue
 
             try:
                 order = self.api.submit_order(
@@ -203,10 +188,10 @@ class OrderRouter:
             except Exception as e:
                 self.logger.error(f"[ERROR] Alpaca API rejected {ticker}: {e}")
 
-        # 5. Validate execution outcome
+        # Guard against broker-side rejections (e.g. Alpaca API error mid-basket)
         if executed_legs == 0:
             self.logger.error(f"[CRITICAL] No legs executed for {spread_name}. Trade aborted.")
-            return {"success": False}
+            return {"success": False, "reason": "no_legs_executed"}
         elif executed_legs < total_legs:
             self.logger.warning(
                 f"[WARNING] Partial execution for {spread_name}: "
