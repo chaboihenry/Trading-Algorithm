@@ -117,6 +117,50 @@ class OrderRouter:
         # Every leg must pass every check before any order is submitted.
         # A single failure rejects the entire basket to preserve market neutrality.
 
+        # ── Basket-level sanity gates (no API calls) ──────────────────────────
+
+        # Gate 1: leg count cap — guards against discovery-layer bugs producing huge baskets
+        if len(weights) > 5:
+            self.logger.warning(
+                f"[ROUTER] Blocked {spread_name}: too many legs ({len(weights)})"
+            )
+            return {"success": False, "reason": "too_many_legs"}
+
+        # Gate 2: hedge ratio sanity — a Johansen weight > 5 is almost certainly a model error
+        max_weight = max(abs(w) for w in weights.values())
+        if max_weight > 5.0:
+            self.logger.warning(
+                f"[ROUTER] Blocked {spread_name}: degenerate hedge ratio "
+                f"(max weight {max_weight:.2f})"
+            )
+            return {"success": False, "reason": "degenerate_weight"}
+
+        # Gate 3: notional concentration — no single leg should exceed 40% of basket notional.
+        # Uses snapshot prices; skips legs with missing/invalid prices (caught below).
+        leg_notional_map = {}
+        for ticker, weight in weights.items():
+            if ticker not in live_matrix.columns or live_matrix.empty:
+                continue
+            price = live_matrix[ticker].iloc[-1]
+            if pd.isna(price) or price <= 0:
+                continue
+            weight_fraction = abs(weight) / abs_weight_sum
+            leg_capital = spread_capital * weight_fraction
+            qty = math.floor(leg_capital / price)
+            leg_notional_map[ticker] = abs(qty) * price
+
+        if leg_notional_map:
+            total_notional = sum(leg_notional_map.values())
+            if total_notional > 0:
+                for ticker, notional in leg_notional_map.items():
+                    pct = notional / total_notional
+                    if pct > 0.40:
+                        self.logger.warning(
+                            f"[ROUTER] Blocked {spread_name}: leg {ticker} dominates "
+                            f"({pct:.1%} of basket)"
+                        )
+                        return {"success": False, "reason": f"concentration:{ticker}"}
+
         held_tickers = self.get_open_positions()
         leg_notionals = []  # accumulated for degenerate-hedge check below
 
