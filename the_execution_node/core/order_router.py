@@ -233,8 +233,6 @@ class OrderRouter:
             )
 
         # Poll each submitted order for fill confirmation; record actual fill prices.
-        # If any leg times out the basket is hedge-broken — return structured failure
-        # so the caller (fix 1.3) can submit compensating closes for filled_legs.
         entry_prices = {}
         filled_tickers = []
         for ticker, order_id, snapshot_price, _ in submitted:
@@ -243,10 +241,33 @@ class OrderRouter:
                 self.logger.error(
                     f"[ERROR] Fill timeout for {spread_name} | {ticker} | Order: {order_id}"
                 )
+                if filled_tickers:
+                    # Partial fill: earlier legs are open, this leg is unhedged.
+                    # Immediately flatten confirmed fills to restore market neutrality.
+                    self.logger.warning(
+                        f"[HEDGE_BROKEN] {spread_name} | "
+                        f"Filled (closing): {filled_tickers} | "
+                        f"Timed out: {ticker}"
+                    )
+                    compensated = []
+                    for leg in filled_tickers:
+                        try:
+                            self.api.close_position(leg)
+                            compensated.append(leg)
+                        except Exception as e:
+                            self.logger.error(
+                                f"[HEDGE_BROKEN] Compensating close failed for {leg}: {e}"
+                            )
+                    return {
+                        "success": False,
+                        "reason": "fill_timeout_compensated",
+                        "compensated_legs": compensated,
+                    }
+                # Zero legs filled before the timeout — nothing to compensate
                 return {
                     "success": False,
                     "reason": "fill_timeout",
-                    "filled_legs": filled_tickers,
+                    "filled_legs": [],
                 }
             entry_prices[ticker] = fill_price
             filled_tickers.append(ticker)
