@@ -1,6 +1,7 @@
 import os
 import math
 import json
+import time
 import logging
 import pandas as pd
 from alpaca_trade_api.rest import REST
@@ -15,6 +16,10 @@ class OrderRouter:
     # and Johansen hedge ratios. Verifies buying power before routing.
 
     SLIPPAGE_BPS = SLIPPAGE_BPS_LIVE
+    FILL_POLL_INTERVAL = 0.25   # seconds between get_order polls
+    FILL_TIMEOUT = 5.0          # hard deadline for fill confirmation
+    # Order terminal states that will never become filled
+    TERMINAL_UNFILLED = frozenset({'canceled', 'expired', 'done_for_day', 'rejected', 'replaced'})
 
     def __init__(self, api_key: str, secret_key: str, base_url: str, logger=None):
         self.api = REST(api_key, secret_key, base_url)
@@ -33,6 +38,36 @@ class OrderRouter:
         except Exception as e:
             self.logger.warning(f"[WARNING] Could not fetch positions: {e}")
             return set()
+
+    def _poll_fill(self, order_id: str, ticker: str, snapshot_price: float) -> tuple:
+        # Polls get_order until filled or FILL_TIMEOUT elapses.
+        # Returns (fill_price, timed_out).
+        # On confirmed fill: fill_price is filled_avg_price (or snapshot fallback if avg is 0).
+        # On timeout or terminal-unfilled state: fill_price is snapshot, timed_out is True.
+        deadline = time.monotonic() + self.FILL_TIMEOUT
+        while time.monotonic() < deadline:
+            try:
+                order = self.api.get_order(order_id)
+                if order.status == 'filled':
+                    avg_price = float(order.filled_avg_price or 0)
+                    if avg_price > 0:
+                        return avg_price, False
+                    # filled_avg_price missing or zero — paper-trading quirk
+                    self.logger.warning(
+                        f"[WARNING] Order {order_id} ({ticker}) filled but avg_price missing; "
+                        f"using snapshot ${snapshot_price:.2f}."
+                    )
+                    return snapshot_price, False
+                if order.status in self.TERMINAL_UNFILLED:
+                    self.logger.warning(
+                        f"[WARNING] Order {order_id} ({ticker}) reached terminal state "
+                        f"'{order.status}' without filling."
+                    )
+                    return snapshot_price, True
+            except Exception as e:
+                self.logger.warning(f"[WARNING] get_order({order_id}) error: {e}")
+            time.sleep(self.FILL_POLL_INTERVAL)
+        return snapshot_price, True  # hard timeout
 
     def execute_spread(self, spread_name: str, signal_data: dict, live_matrix: pd.DataFrame, open_spreads: set):
         # Routes a cointegrated basket trade with proper hedge ratio sizing
@@ -152,18 +187,19 @@ class OrderRouter:
         # ── Phase 2: order submission ──────────────────────────────────────────
         # All legs passed pre-flight. Submit every leg; no eligibility skips here.
 
-        entry_prices = {}
+        # submitted: (ticker, order_id, snapshot_price, signed_qty)
+        submitted = []
         leg_shares = {}
         executed_legs = 0
         total_legs = len(weights)
 
         for ticker, weight in weights.items():
-            price = live_matrix[ticker].iloc[-1]
+            snapshot_price = live_matrix[ticker].iloc[-1]
             weight_fraction = abs(weight) / abs_weight_sum
             leg_capital = spread_capital * weight_fraction
             trade_direction = target_pos * weight
             side = 'buy' if trade_direction > 0 else 'sell'
-            qty = math.floor(leg_capital / price)
+            qty = math.floor(leg_capital / snapshot_price)
 
             try:
                 order = self.api.submit_order(
@@ -173,17 +209,15 @@ class OrderRouter:
                     type='market',
                     time_in_force='day'
                 )
-                notional = qty * price
+                notional = qty * snapshot_price
                 self.logger.info(
                     f"[EXECUTED] {side.upper()} {qty}x {ticker} "
-                    f"@ ~${price:.2f} (${notional:.2f}) | Order: {order.id}"
+                    f"@ ~${snapshot_price:.2f} (${notional:.2f}) | Order: {order.id}"
                 )
-
-                # Record entry data for P&L logging at close
                 # Signed shares: positive for long, negative for short
                 signed_qty = qty if side == 'buy' else -qty
-                entry_prices[ticker] = float(price)
                 leg_shares[ticker] = signed_qty
+                submitted.append((ticker, order.id, snapshot_price, signed_qty))
                 executed_legs += 1
             except Exception as e:
                 self.logger.error(f"[ERROR] Alpaca API rejected {ticker}: {e}")
@@ -196,6 +230,28 @@ class OrderRouter:
             self.logger.warning(
                 f"[WARNING] Partial execution for {spread_name}: "
                 f"{executed_legs}/{total_legs} legs filled. Hedge is incomplete."
+            )
+
+        # Poll each submitted order for fill confirmation; record actual fill prices.
+        # If any leg times out the basket is hedge-broken — return structured failure
+        # so the caller (fix 1.3) can submit compensating closes for filled_legs.
+        entry_prices = {}
+        filled_tickers = []
+        for ticker, order_id, snapshot_price, _ in submitted:
+            fill_price, timed_out = self._poll_fill(order_id, ticker, snapshot_price)
+            if timed_out:
+                self.logger.error(
+                    f"[ERROR] Fill timeout for {spread_name} | {ticker} | Order: {order_id}"
+                )
+                return {
+                    "success": False,
+                    "reason": "fill_timeout",
+                    "filled_legs": filled_tickers,
+                }
+            entry_prices[ticker] = fill_price
+            filled_tickers.append(ticker)
+            self.logger.info(
+                f"[FILL] {ticker} confirmed @ ${fill_price:.4f} (order {order_id})"
             )
 
         return {
@@ -216,31 +272,45 @@ class OrderRouter:
         closed = 0
         exit_prices = {}
 
-        # Capture exit prices BEFORE closing — close_position is async, so quote it now
+        # Submit close orders, capturing order IDs and snapshot prices as fallback.
+        # close_orders: ticker -> (order_id, snapshot_price)
+        close_orders = {}
         for ticker in weights:
             if ticker not in held_tickers:
                 continue
+            # Snapshot is fallback only — used if filled_avg_price is unavailable
+            snapshot_price = 0.0
             try:
                 quote = self.api.get_latest_trade(ticker)
-                exit_prices[ticker] = float(quote.price)
+                snapshot_price = float(quote.price)
             except Exception as e:
-                self.logger.warning(f"[WARNING] Could not fetch exit price for {ticker}: {e}")
-                exit_prices[ticker] = 0.0
-
-        # Submit close orders
-        for ticker in weights:
-            if ticker not in held_tickers:
-                continue
+                self.logger.warning(f"[WARNING] Could not fetch snapshot price for {ticker}: {e}")
             try:
-                self.api.close_position(ticker)
-                self.logger.info(f"[CLOSED] {ticker}")
+                order = self.api.close_position(ticker)
+                self.logger.info(f"[CLOSED] {ticker} | Order: {order.id}")
                 closed += 1
+                close_orders[ticker] = (order.id, snapshot_price)
             except Exception as e:
                 self.logger.error(f"[ERROR] Failed to close {ticker}: {e}")
 
         if closed == 0:
             self.logger.info(f"[INFO] No positions found to close for {spread_name}.")
             return False
+
+        # Poll for fill confirmation and record actual exit prices
+        for ticker, (order_id, snapshot_price) in close_orders.items():
+            fill_price, timed_out = self._poll_fill(order_id, ticker, snapshot_price)
+            if timed_out:
+                self.logger.error(
+                    f"[ERROR] Close fill timeout for {spread_name} | {ticker} | Order: {order_id}"
+                )
+                # Position is closed regardless — use snapshot as best available estimate
+                exit_prices[ticker] = snapshot_price
+            else:
+                exit_prices[ticker] = fill_price
+                self.logger.info(
+                    f"[FILL] {ticker} close confirmed @ ${fill_price:.4f} (order {order_id})"
+                )
 
         # Log trade only if full metadata from caller is available
         if position_data and "leg_shares" in position_data and "entry_prices" in position_data:
