@@ -1,6 +1,6 @@
 # Signal thresholds
 Z_THRESH = 2.39
-AI_THRESH = 0.56
+AI_THRESH = 0.0
 
 # Triple-barrier exit thresholds (multipliers on per-bar volatility)
 PT_SKEW = 1.90
