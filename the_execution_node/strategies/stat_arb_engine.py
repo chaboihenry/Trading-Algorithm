@@ -8,10 +8,9 @@ from the_research_node.m1_xgboost_trainer import apply_frac_diff, find_optimal_d
 from the_utilities.strategy_config import (
     Z_THRESH, AI_THRESH, PT_SKEW, SL_SKEW, TIME_BARRIER, LEVERAGE
 )
-from the_utilities.regime_filter import check_regime_safe_now
 from the_utilities.paths import (
     MODELS_DIR, CURATED_UNIVERSE_JSON, ACTIVE_MODEL_VERSION,
-    META_LABELER_JSON, RAW_MACRO_CSV, STRUCTURAL_LIFECYCLE_JSON
+    META_LABELER_JSON, RAW_MACRO_CSV
 )
 from the_utilities.basket_naming import canonical_ticker_set
 
@@ -31,27 +30,12 @@ def _load_meta_labeler():
     return model
 
 
-def _load_validated_basket_keys() -> set:
-    if not os.path.exists(STRUCTURAL_LIFECYCLE_JSON):
-        return set()
-    with open(STRUCTURAL_LIFECYCLE_JSON, "r") as f:
-        ledger = json.load(f)
-    return {frozenset(data['tickers']) for data in ledger.values()}
-
-
 def generate_signals(live_matrix: pd.DataFrame):
     try:
         with open(CURATED_UNIVERSE_JSON, "r") as f:
             curated_baskets = json.load(f).get("baskets", {})
     except FileNotFoundError:
         print("[CRITICAL] curated_universe.json not found.")
-        return {}, pd.DataFrame()
-
-    validated_keys = _load_validated_basket_keys()
-
-    regime_safe = check_regime_safe_now()
-    if not regime_safe:
-        print("[SHIELD] CUSUM regime break detected on SPY. Blocking all new entries.")
         return {}, pd.DataFrame()
 
     try:
@@ -65,9 +49,6 @@ def generate_signals(live_matrix: pd.DataFrame):
 
     for spread_name, params in curated_baskets.items():
         weights = params.get('weights', {})
-
-        if frozenset(weights.keys()) not in validated_keys:
-            continue
 
         half_life = params.get('half_life', 1.0)
         allocation = params.get('capital_allocation', 0.0)
@@ -173,7 +154,6 @@ def check_exits(live_matrix: pd.DataFrame, open_positions: dict):
     except FileNotFoundError:
         return {}
 
-    validated_keys = _load_validated_basket_keys()
     exits = {}
 
     for spread_name, pos_data in open_positions.items():
@@ -183,10 +163,6 @@ def check_exits(live_matrix: pd.DataFrame, open_positions: dict):
             continue
 
         weights = params.get('weights', {})
-
-        if frozenset(weights.keys()) not in validated_keys:
-            exits[spread_name] = "basket_removed"
-            continue
 
         half_life = params.get('half_life', 1.0)
 

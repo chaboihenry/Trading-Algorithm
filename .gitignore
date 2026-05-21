@@ -48,9 +48,6 @@ logs/
 !strategies/models/.gitkeep
 
 # Results & Reports
-backtesting/results/*.md
-backtesting/results/*.json
-backtesting/results/*.csv
 
 # Environment
 .env

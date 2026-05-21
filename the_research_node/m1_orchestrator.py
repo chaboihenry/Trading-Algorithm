@@ -143,9 +143,6 @@ def run_weekly_ml_pipeline():
         logger.error("HRP allocation failed. Aborting.")
         return
 
-    run_step("BACKTEST MATRIX",
-             [sys.executable, "-m", "the_utilities.build_backtest_matrix"])
-
     if not run_step("XGBOOST TRAINER",
                     [sys.executable, "-m", "the_research_node.m1_xgboost_trainer"]):
         logger.error("XGBoost training failed. Keeping previous model.")

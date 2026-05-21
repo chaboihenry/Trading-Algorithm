@@ -4,7 +4,7 @@ A fully autonomous statistical arbitrage system trading in Alpaca's paper enviro
 
 ## Current Status
 
-🟢 **Paper Trading Active** — The agent is live on Alpaca's paper account, executing trades autonomously during U.S. market hours. This is the forward-validation phase; performance is being evaluated on truly out-of-sample data. Results will be published at the end of the 90-day trial.
+🟢 Paper Trading Active — The agent is live on Alpaca's paper account. No validated out-of-sample results yet.
 
 ## How It Works
 
@@ -15,22 +15,6 @@ The system runs 24/7 across two nodes: a **Research Node** (MacBook Pro) that re
 **Trade Filtering** — An XGBoost meta-labeler scores every candidate signal using fractionally differentiated features and microstructure dynamics. Only setups exceeding a dynamic probability threshold reach the order router.
 
 **Risk Control** — Hierarchical Risk Parity (HRP) allocates capital across active spreads daily. A CUSUM filter on SPY monitors for regime breaks and blocks new entries during macro instability. Cooldown timers, EOD liquidation, and short-borrow checks prevent whipsaw and overnight gap risk.
-
-## Backtest Results
-
-In-sample backtest over 5 years (March 2021 – February 2026) using walk-forward lifecycle-aware cointegration discovery, share-based P&L accounting, realistic slippage and borrow costs, and Reg-T leverage (2.0x):
-
-![5-Year Backtest Tearsheet](backtesting/results/backtest_tearsheet_final.png)
-
-| Metric | Agent | SPY |
-|---|---|---|
-| Total Return | 31.58% | ~60% |
-| Max Drawdown | **-1.46%** | -24.47% |
-| RoMD | **21.64** | ~2.4 |
-
-Parameters (`Z=2.39, AI=0.56, PT=1.90, SL=1.75, Lev=2.0x`) were selected via survival-constrained Monte Carlo optimization that rejects configurations with drawdown exceeding 20% of starting equity.
-
-**Caveats:** This is an in-sample result — baskets were discovered on the same price history being tested. Real paper trading will likely show lower returns and higher drawdowns. The point of the 90-day trial is to measure the out-of-sample gap.
 
 ## Data
 
