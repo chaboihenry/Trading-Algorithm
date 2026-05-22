@@ -25,7 +25,8 @@ STRICT_SCHEMA = pa.schema([
 ])
 
 TICKER_BATCH_SIZE = 30
-VAULT_ROOT = "/Volumes/Vault/quant_data/tick data storage"
+# Local WSL2 ext4 storage — fast I/O for multi-day pulls
+VAULT_ROOT = os.path.expanduser("~/quant_data/tick_data_storage")
 
 
 def load_universe():
@@ -85,12 +86,15 @@ def detect_last_collected_month(universe):
     return next_month
 
 def query_single_day(db, date_str, ticker_batch):
+    # Library naming: taqmsec is deprecated for new data; use taqm_YYYY
+    year = date_str[:4]
+    library = f"taqm_{year}"
     table_name = f"ctm_{date_str}"
     tickers_sql = ", ".join(f"'{t}'" for t in ticker_batch)
 
     query = f"""
         SELECT date, time_m, price, size, ex, sym_root
-        FROM taqmsec.{table_name}
+        FROM {library}.{table_name}
         WHERE sym_root IN ({tickers_sql})
         AND sym_suffix IS NULL
         AND tr_corr = '00'
@@ -102,6 +106,7 @@ def query_single_day(db, date_str, ticker_batch):
     except Exception as e:
         error_msg = str(e)
         if "does not exist" in error_msg or "UndefinedTable" in error_msg:
+            # Holidays and other non-trading days — silent skip is intentional
             return pd.DataFrame()
         else:
             log(f"  [ERROR] Query failed for {table_name}: {error_msg}")
@@ -241,6 +246,12 @@ def run_full_rebuild(start_year: int = 2021):
     for month_idx, (month_key, days) in enumerate(sorted(months.items()), 1):
         log(f"\n[{month_idx}/{len(months)}] {month_key}: {len(days)} trading days")
 
+        # Resumption guard: skip month if completion marker exists
+        marker_path = os.path.join(VAULT_ROOT, "_markers", f"{month_key}.done")
+        if os.path.exists(marker_path):
+            log(f"  [SKIP] {month_key} already complete (marker found)")
+            continue
+
         writers = {}
         for ticker in universe:
             ticker_dir = os.path.join(VAULT_ROOT, ticker, "parquet", "training_data")
@@ -279,6 +290,11 @@ def run_full_rebuild(start_year: int = 2021):
         for ticker in universe:
             writers[ticker].close()
 
+        # Write marker file atomically after all writers closed cleanly
+        os.makedirs(os.path.dirname(marker_path), exist_ok=True)
+        with open(marker_path, "w") as f:
+            f.write(f"{datetime.now().isoformat()}\n{month_rows} rows\n")
+
         total_rows += month_rows
         log(f"  [COMPLETED] {month_key}: {month_rows:,} rows written to disk")
         time.sleep(2)
@@ -288,4 +304,5 @@ def run_full_rebuild(start_year: int = 2021):
 
 
 if __name__ == "__main__":
-    run_incremental_collection()
+    # Full 5-year rebuild on ASUS WSL2 — start from Jan 2021
+    run_full_rebuild(start_year=2021)

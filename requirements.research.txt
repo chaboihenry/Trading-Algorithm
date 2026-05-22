@@ -1,0 +1,30 @@
+# Research Node Dependencies (CPU-only, runs locally on ASUS in WSL2)
+
+# Brokerage (some research scripts touch Alpaca for clock/calendar)
+alpaca-trade-api>=3.0.0
+
+# Data handling
+pandas>=2.0.0
+numpy>=1.24.0
+pyarrow>=14.0.0
+
+# ML — CPU XGBoost; same as execution side
+xgboost>=2.0.0
+scikit-learn>=1.3.0
+statsmodels>=0.14.0
+numba>=0.59.0
+
+# WRDS data collection
+wrds>=3.2.0
+
+# Macro data fetching
+yfinance>=0.2.40
+
+# Orchestrator
+schedule>=1.2.0
+
+# Config and env
+python-dotenv>=1.0.0
+
+# Visualization
+matplotlib>=3.7.0
