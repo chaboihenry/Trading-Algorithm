@@ -10,6 +10,10 @@ from sklearn.model_selection import RandomizedSearchCV
 
 from the_utilities.paths import MODELS_DIR, CURATED_UNIVERSE_JSON, ACTIVE_MODEL_VERSION
 
+# Local WSL2 ext4 storage — fast I/O for multi-day pulls
+VAULT_ROOT = os.path.expanduser("~/quant_data/tick_data_storage")
+
+
 # --- 1. DIB CONSTRUCTION ENGINE ---
 @jit(nopython=True)
 def sample_imbalance_bars_streaming(signed_dv_array, threshold, initial_theta):
@@ -28,7 +32,7 @@ def sample_imbalance_bars_streaming(signed_dv_array, threshold, initial_theta):
 
 def construct_m1_dibs(ticker: str, threshold: float = 50_000_000):
     print(f"Constructing Streaming DIBs for Anchor Ticker: {ticker}...")
-    path = f"/Volumes/Vault/quant_data/tick data storage/{ticker}/parquet/training_data"
+    path = f"{VAULT_ROOT}/{ticker}/parquet/training_data"
     
     # 1. Sort files chronologically and strictly enforce the 2024+ regime
     try:
@@ -219,7 +223,7 @@ def train_meta_labeler():
         # 2. Stream and instantly resample 1-min bars chronologically
         prices = {}
         for t in tickers:
-            path = f"/Volumes/Vault/quant_data/tick data storage/{t}/parquet/training_data"
+            path = f"{VAULT_ROOT}/{t}/parquet/training_data"
             try:
                 files = sorted([
                     os.path.join(path, f) for f in os.listdir(path) 

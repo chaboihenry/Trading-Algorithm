@@ -11,6 +11,10 @@ import statsmodels.api as sm
 
 from the_utilities.paths import MODELS_DIR, CURATED_UNIVERSE_JSON, DISCOVERY_LEDGER_JSONL
 
+# Local WSL2 ext4 storage — fast I/O for multi-day pulls
+VAULT_ROOT = os.path.expanduser("~/quant_data/tick_data_storage")
+
+
 def _append_discovery_ledger(entry: dict):
     # Append one JSON line per cluster tested. JSONL format (one object per line)
     os.makedirs(os.path.dirname(DISCOVERY_LEDGER_JSONL), exist_ok=True)
@@ -34,9 +38,9 @@ def load_daily_from_vault(tickers: list, lookback_days: int = 365):
     daily_prices = {}
     
     for ticker in tickers:
-        path = f"/Volumes/Vault/quant_data/tick data storage/{ticker}/parquet/training_data"
+        path = f"{VAULT_ROOT}/{ticker}/parquet/training_data"
         if not os.path.exists(path): continue
-        
+
         daily_chunks = []
         for file in sorted(os.listdir(path)):
             if not file.endswith('.parquet') or file.startswith('._'):
@@ -72,9 +76,9 @@ def load_vault_data(cluster_tickers: list, lookback_days: int = 90):
     ticker_series = {}
 
     for ticker in cluster_tickers:
-        path = f"/Volumes/Vault/quant_data/tick data storage/{ticker}/parquet/training_data"
+        path = f"{VAULT_ROOT}/{ticker}/parquet/training_data"
         if not os.path.exists(path): continue
-        
+
         resampled_chunks = []
         for file in sorted(os.listdir(path)):
             if not file.endswith('.parquet') or file.startswith('._'):

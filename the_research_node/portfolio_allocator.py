@@ -7,6 +7,9 @@ from scipy.spatial.distance import squareform
 from the_utilities.strategy_config import HRP_MAX_CAP, HRP_MIN_FLOOR
 from the_utilities.paths import CURATED_UNIVERSE_JSON
 
+# Local WSL2 ext4 storage — fast I/O for multi-day pulls
+VAULT_ROOT = os.path.expanduser("~/quant_data/tick_data_storage")
+
 # --- LÓPEZ DE PRADO HRP MATHEMATICS ---
 
 def get_ivp(cov, **kargs):
@@ -86,7 +89,7 @@ def run_hrp_allocation():
         
         prices = {}
         for t in tickers:
-            path = f"/Volumes/Vault/quant_data/tick data storage/{t}/parquet/training_data"
+            path = f"{VAULT_ROOT}/{t}/parquet/training_data"
             if not os.path.exists(path): continue
             
             # Filter out the massive merged files and WRDS backups to prevent RAM exhaustion
