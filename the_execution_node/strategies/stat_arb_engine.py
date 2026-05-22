@@ -3,7 +3,7 @@ import json
 import pandas as pd
 import numpy as np
 import xgboost as xgb
-from the_research_node.m1_xgboost_trainer import apply_frac_diff, find_optimal_d
+from the_research_node.xgboost_trainer import apply_frac_diff, find_optimal_d
 
 from the_utilities.strategy_config import (
     Z_THRESH, AI_THRESH, PT_SKEW, SL_SKEW, TIME_BARRIER, LEVERAGE

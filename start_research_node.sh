@@ -7,7 +7,7 @@ echo "Time: $(date)"
 source venv/bin/activate
 
 while true; do
-    python -m the_research_node.m1_orchestrator
+    python -m the_research_node.orchestrator
 
     echo "[CRASH] Orchestrator exited at $(date)"
     echo "[RECOVERY] Restarting in 10 seconds..."

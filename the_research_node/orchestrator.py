@@ -108,12 +108,12 @@ def run_research_pipeline():
              [sys.executable, "-m", "the_utilities.fetch_macro_data"])
 
     if not run_step("CLUSTER DISCOVERY",
-                    [sys.executable, "-m", "the_research_node.m1_cluster_discovery"]):
+                    [sys.executable, "-m", "the_research_node.cluster_discovery"]):
         logger.error("Cluster discovery failed. Aborting.")
         return
 
     if not run_step("HRP ALLOCATOR",
-                    [sys.executable, "-m", "the_research_node.m1_portfolio_allocator"]):
+                    [sys.executable, "-m", "the_research_node.portfolio_allocator"]):
         logger.error("HRP allocation failed. Aborting.")
         return
 
@@ -134,17 +134,17 @@ def run_weekly_ml_pipeline():
              [sys.executable, "-m", "the_research_node.wrds_training_collector"])
 
     if not run_step("CLUSTER DISCOVERY",
-                    [sys.executable, "-m", "the_research_node.m1_cluster_discovery"]):
+                    [sys.executable, "-m", "the_research_node.cluster_discovery"]):
         logger.error("Cluster discovery failed. Aborting.")
         return
 
     if not run_step("HRP ALLOCATOR",
-                    [sys.executable, "-m", "the_research_node.m1_portfolio_allocator"]):
+                    [sys.executable, "-m", "the_research_node.portfolio_allocator"]):
         logger.error("HRP allocation failed. Aborting.")
         return
 
     if not run_step("XGBOOST TRAINER",
-                    [sys.executable, "-m", "the_research_node.m1_xgboost_trainer"]):
+                    [sys.executable, "-m", "the_research_node.xgboost_trainer"]):
         logger.error("XGBoost training failed. Keeping previous model.")
 
     git_push()
