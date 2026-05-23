@@ -1,4 +1,4 @@
-# Research Node Dependencies (CPU-only, runs locally on ASUS in WSL2)
+# Research Node Dependencies (CPU-only)
 
 # Brokerage (some research scripts touch Alpaca for clock/calendar)
 alpaca-trade-api>=3.0.0

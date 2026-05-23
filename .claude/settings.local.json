@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wsl.exe -d Ubuntu -- bash -lc 'cd /home/chaboihenry/projects/Trading-Algorithm && .venv/bin/python -c \" *)"
+    ]
+  }
+}

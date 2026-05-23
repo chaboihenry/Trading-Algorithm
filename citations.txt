@@ -1,0 +1,31 @@
+Cointegration & vector error correction:
+
+Johansen, S. (1991). Estimation and Hypothesis Testing of Cointegration Vectors in Gaussian Vector Autoregressive Models. Econometrica, 59(6), 1551–1580.
+Engle, R.F. & Granger, C.W.J. (1987). Co-integration and Error Correction: Representation, Estimation, and Testing. Econometrica, 55(2), 251–276.
+
+Mean reversion & Ornstein-Uhlenbeck:
+
+Avellaneda, M. & Lee, J.H. (2010). Statistical Arbitrage in the U.S. Equities Market. Quantitative Finance, 10(7), 761–782.
+Vidyamurthy, G. (2004). Pairs Trading: Quantitative Methods and Analysis. Wiley.
+
+Stationarity tests:
+
+Dickey, D.A. & Fuller, W.A. (1979). Distribution of the Estimators for Autoregressive Time Series with a Unit Root. Journal of the American Statistical Association, 74(366a), 427–431.
+
+Clustering for pairs selection:
+
+Ester, M., Kriegel, H.P., Sander, J., & Xu, X. (1996). A density-based algorithm for discovering clusters in large spatial databases with noise. KDD-96 Proceedings. (DBSCAN)
+Sarmento, S.M. & Horta, N. (2020). Enhancing a Pairs Trading strategy with the application of Machine Learning. Expert Systems with Applications, 158, 113490.
+
+Hurst exponent (for filter #8):
+
+Hurst, H.E. (1951). Long-term storage capacity of reservoirs. Transactions of the American Society of Civil Engineers, 116, 770–799.
+Mandelbrot, B.B. & Wallis, J.R. (1969). Robustness of the rescaled range R/S in the measurement of noncyclic long run statistical dependence. Water Resources Research, 5(5), 967–988.
+
+Meta-labeling & financial ML (for downstream meta-labeler when revisited):
+
+López de Prado, M. (2018). Advances in Financial Machine Learning. Wiley. (Chapters 3, 7, 17, 18, 19 most relevant)
+
+Pairs trading foundational:
+
+Gatev, E., Goetzmann, W.N., & Rouwenhorst, K.G. (2006). Pairs Trading: Performance of a Relative-Value Arbitrage Rule. Review of Financial Studies, 19(3), 797–827.

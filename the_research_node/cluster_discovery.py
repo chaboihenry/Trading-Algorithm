@@ -11,6 +11,7 @@ from statsmodels.tsa.stattools import adfuller
 import statsmodels.api as sm
 
 from the_utilities.paths import MODELS_DIR, CURATED_UNIVERSE_JSON, DISCOVERY_LEDGER_JSONL
+from the_utilities.split_adjustment import apply_split_adjustment
 
 # Local WSL2 ext4 storage
 VAULT_ROOT = os.path.expanduser("~/quant_data/tick_data_storage")
@@ -78,6 +79,7 @@ def load_daily_from_vault(tickers: list, lookback_days: int = 365):
                 if chunk.empty: continue
                 chunk['timestamp'] = pd.to_datetime(chunk['timestamp'], utc=True)
                 daily = chunk.set_index('timestamp')['price'].resample('1D').last()
+                daily = apply_split_adjustment(daily, ticker)
                 daily_chunks.append(daily)
                 del chunk
             except Exception:
@@ -119,6 +121,7 @@ def load_vault_data(cluster_tickers: list, lookback_days: int = 90):
                 if chunk.empty: continue
                 chunk['timestamp'] = pd.to_datetime(chunk['timestamp'], utc=True)
                 bars = chunk.set_index('timestamp')['price'].resample('5min').last()
+                bars = apply_split_adjustment(bars, ticker)
                 resampled_chunks.append(bars)
                 del chunk
             except Exception:
