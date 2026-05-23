@@ -251,6 +251,17 @@ def run_discovery_pipeline():
     run_timestamp = pd.Timestamp.now(tz='UTC').isoformat()
 
     for _, cluster_tickers in groups.items():
+        # Reject clusters > 12 tickers — Johansen critical values unreliable above n=12
+        if len(cluster_tickers) > 12:
+            _append_discovery_ledger({
+                "timestamp": run_timestamp,
+                "tickers": cluster_tickers,
+                "status": "cluster_too_large_for_johansen",
+                "cluster_size": len(cluster_tickers),
+            })
+            print(f"  >> [SIZE LIMIT] Skipping {len(cluster_tickers)}-ticker cluster (Johansen max=12)")
+            continue
+
         aligned = load_vault_data(cluster_tickers)
         if aligned.empty:
             _append_discovery_ledger({
