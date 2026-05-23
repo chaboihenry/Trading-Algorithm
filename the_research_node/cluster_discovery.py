@@ -144,6 +144,8 @@ def test_cointegration(aligned_data: pd.DataFrame, tickers: list):
         'r_squared': None,
         'spread_adf_pvalue': None,
         'oos_spread_adf_pvalue': None,
+        'hurst_exponent': None,
+        'mean_crossings': None,
     }
 
     n = len(aligned_data)
@@ -172,6 +174,10 @@ def test_cointegration(aligned_data: pd.DataFrame, tickers: list):
     in_spread = in_sample.dot(eigenvector).dropna()
     spread_adf_p = float(adfuller(in_spread)[1])
 
+    # Hurst and mean crossings on same in-sample spread
+    hurst_val = hurst_exponent(in_spread.values)
+    crossings = count_mean_crossings(in_spread)
+
     # OOS spread stationarity using same in-sample weights
     oos_spread = held_out.dot(eigenvector).dropna()
     oos_spread_adf_p = float(adfuller(oos_spread)[1])
@@ -193,6 +199,8 @@ def test_cointegration(aligned_data: pd.DataFrame, tickers: list):
         'r_squared': r_squared,
         'spread_adf_pvalue': spread_adf_p,
         'oos_spread_adf_pvalue': oos_spread_adf_p,
+        'hurst_exponent': hurst_val,
+        'mean_crossings': crossings,
     }
 
 def enforce_websocket_limit(baskets: dict, max_tickers: int = 30):
@@ -259,6 +267,8 @@ def run_discovery_pipeline():
         r_squared = coint_result['r_squared']
         spread_adf_p = coint_result['spread_adf_pvalue']
         oos_spread_adf_p = coint_result['oos_spread_adf_pvalue']
+        hurst_val = coint_result['hurst_exponent']
+        crossings = coint_result['mean_crossings']
 
         ledger_entry = {
             "timestamp": run_timestamp,
@@ -269,6 +279,8 @@ def run_discovery_pipeline():
             "r_squared": r_squared,
             "spread_adf_pvalue": spread_adf_p,
             "oos_spread_adf_pvalue": oos_spread_adf_p,
+            "hurst_exponent": hurst_val,
+            "mean_crossings": crossings,
         }
 
         if weights:
@@ -303,6 +315,14 @@ def run_discovery_pipeline():
             ledger_entry["status"] = f"ou_fit_too_weak (R2={r_squared})"
             print(f"  >> [OU FIT] {'_'.join(cluster_tickers)}: "
                   f"R² = {r_squared}")
+        elif hurst_val is None or hurst_val >= 0.5:
+            ledger_entry["status"] = f"hurst_not_mean_reverting (H={hurst_val})"
+            print(f"  >> [HURST] {'_'.join(cluster_tickers)}: "
+                  f"H = {hurst_val}")
+        elif crossings is None or crossings < 12:
+            ledger_entry["status"] = f"insufficient_mean_crossings ({crossings})"
+            print(f"  >> [CROSSINGS] {'_'.join(cluster_tickers)}: "
+                  f"in-sample crossings = {crossings}")
         elif not (0.01 <= hl_days <= 15.0):
             ledger_entry["status"] = f"half_life_out_of_range ({hl_days:.2f}d)"
         elif ledger_entry["min_max_weight_ratio"] is not None and ledger_entry["min_max_weight_ratio"] < 0.15:
@@ -325,7 +345,8 @@ def run_discovery_pipeline():
                   f"weight ratio: {ledger_entry['min_max_weight_ratio']:.3f} | "
                   f"notional: {ledger_entry['max_notional_concentration']:.1%} | "
                   f"R²: {r_squared:.3f} | "
-                  f"ADF p: {spread_adf_p:.4f}/{oos_spread_adf_p:.4f}")
+                  f"ADF p: {spread_adf_p:.4f}/{oos_spread_adf_p:.4f} | "
+                  f"H: {hurst_val:.3f} | crossings: {crossings}")
 
         _append_discovery_ledger(ledger_entry)
 
