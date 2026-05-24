@@ -13,6 +13,21 @@ import statsmodels.api as sm
 from the_utilities.paths import MODELS_DIR, CURATED_UNIVERSE_JSON, DISCOVERY_LEDGER_JSONL
 from the_utilities.split_adjustment import apply_split_adjustment
 
+# Discovery frequency: DAILY (changed from 5-min on 2026-05-24)
+#
+# The cointegration testing pipeline previously used 5-min bars. Empirical diagnosis showed
+# this produced microstructure-driven false positives: Johansen trace statistics were 5-50x
+# higher than daily on identical baskets (e.g., CVX/XLE/XOM showed trace=335 at 5-min vs
+# 12.7 at daily against a critical value of 29.8), and OU R^2 was effectively zero at 5-min
+# (e.g., GOOG/QQQ showed R^2=0.0003 at 5-min vs 0.95 at daily on the same pair).
+#
+# Switching to daily aligns with academic literature:
+#   - Avellaneda & Lee (2010): "Statistical Arbitrage in the U.S. Equities Market" — weekly returns
+#   - Gatev, Goetzmann, Rouwenhorst (2006): "Pairs Trading: Performance of a Relative-Value
+#     Arbitrage Rule" — daily prices
+#   - Sarmento & Horta (2020): "Enhancing a Pairs Trading strategy with the application of
+#     Machine Learning" — daily prices
+
 # Local WSL2 ext4 storage
 VAULT_ROOT = os.path.expanduser("~/quant_data/tick_data_storage")
 
@@ -95,7 +110,7 @@ def load_daily_from_vault(tickers: list, lookback_days: int = 365):
     return pd.DataFrame(daily_prices).ffill().dropna()
 
 def load_vault_data(cluster_tickers: list, lookback_days: int = 90):
-    # 5-min bars for cointegration testing
+    # Daily bars for cointegration testing
     cutoff_dt = pd.Timestamp.now(tz='UTC') - pd.Timedelta(days=lookback_days)
     cutoff_str = cutoff_dt.strftime('%Y%m%d')
 
@@ -120,7 +135,7 @@ def load_vault_data(cluster_tickers: list, lookback_days: int = 90):
                 )
                 if chunk.empty: continue
                 chunk['timestamp'] = pd.to_datetime(chunk['timestamp'], utc=True)
-                bars = chunk.set_index('timestamp')['price'].resample('5min').last()
+                bars = chunk.set_index('timestamp')['price'].resample('1D').last()
                 bars = apply_split_adjustment(bars, ticker)
                 resampled_chunks.append(bars)
                 del chunk
@@ -195,9 +210,10 @@ def test_cointegration(aligned_data: pd.DataFrame, tickers: list):
     lambda_val = ols.params.iloc[1]
     half_life = -np.log(2) / lambda_val if lambda_val < 0 else np.inf
 
+    # At daily frequency, OU lambda is already per-day, so half_life is already in days
     return {
         'is_cointegrated': True,
-        'half_life_days': half_life / 78,
+        'half_life_days': half_life,
         'weights': weights,
         'r_squared': r_squared,
         'spread_adf_pvalue': spread_adf_p,

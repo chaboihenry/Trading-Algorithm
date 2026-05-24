@@ -23,6 +23,7 @@ def _load_factors():
             return None
         df = pd.read_parquet(SPLIT_FACTORS_PATH)
         df['date'] = pd.to_datetime(df['date'])
+        df['cfacpr'] = df['cfacpr'].astype('float64')
         _SPLIT_FACTORS = df
     return _SPLIT_FACTORS
 

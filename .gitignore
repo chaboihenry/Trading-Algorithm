@@ -65,3 +65,5 @@ temp/
 
 trade_history.csvtrade_history_phase1.csv
 the_execution_node/data/trade_history.csv
+
+.claude/

@@ -28,6 +28,28 @@ TICKER_BATCH_SIZE = 30
 # Local WSL2 ext4 storage — fast I/O for multi-day pulls
 VAULT_ROOT = os.path.expanduser("~/quant_data/tick_data_storage")
 
+# Share-class encoded tickers: TAQ stores these as (sym_root, sym_suffix)
+# rather than the plain ticker. Add entries when universe_sweep finds them.
+TICKER_MAPPING = {
+    "GOOGL": ("GOOG", "L"),  # Alphabet Class A
+    "CMCSA": ("CMCS", "A"),  # Comcast Class A
+}
+
+# Error substrings that indicate the WRDS connection has died and needs reconnect
+CONNECTION_ERROR_PATTERNS = [
+    "Can't reconnect until invalid transaction",
+    "Connection timed out",
+    "SSL SYSCALL error",
+    "server closed the connection",
+    "could not receive data from server",
+    "InvalidatedTransaction",
+]
+
+
+class _ConnectionBroken(Exception):
+    """Internal signal: WRDS connection died, caller should reconnect."""
+    pass
+
 
 def load_universe():
     with open(UNIVERSE_PATH, "r") as f:
@@ -52,7 +74,7 @@ def log(msg):
         f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n")
 
 def detect_last_collected_month(universe):
-    # Scans the vault to find the most recent month file across all tickers
+    # Scan vault to find the most recent month file across all tickers
     # Returns the first day of the NEXT month to collect
     latest_month = None
 
@@ -85,35 +107,93 @@ def detect_last_collected_month(universe):
     log(f"[SYSTEM] Latest data: {latest_month.strftime('%Y_%m')}. Resuming from {next_month.date()}.")
     return next_month
 
+
+def _is_connection_broken(error_msg):
+    # True if the error message contains any known connection-failure pattern
+    return any(p in error_msg for p in CONNECTION_ERROR_PATTERNS)
+
+
+def _reconnect(db):
+    # Close broken connection (silently) and open a fresh one
+    try:
+        db.close()
+    except Exception:
+        pass
+    log("  [RECOVERY] Opening new WRDS connection...")
+    new_db = wrds.Connection(wrds_username=WRDS_USERNAME)
+    log("  [RECOVERY] Reconnected.")
+    return new_db
+
+
 def query_single_day(db, date_str, ticker_batch):
     # Library naming: taqmsec is deprecated for new data; use taqm_YYYY
     year = date_str[:4]
     library = f"taqm_{year}"
     table_name = f"ctm_{date_str}"
-    tickers_sql = ", ".join(f"'{t}'" for t in ticker_batch)
 
+    # Split batch into normal tickers and share-class-encoded ones
+    normal = [t for t in ticker_batch if t not in TICKER_MAPPING]
+    special = [t for t in ticker_batch if t in TICKER_MAPPING]
+
+    # Normal tickers: sym_root match + NULL suffix
+    # Special tickers: explicit (root, suffix) match
+    where_parts = []
+    if normal:
+        normal_sql = ", ".join(f"'{t}'" for t in normal)
+        where_parts.append(f"(sym_root IN ({normal_sql}) AND sym_suffix IS NULL)")
+    for t in special:
+        root, suffix = TICKER_MAPPING[t]
+        where_parts.append(f"(sym_root = '{root}' AND sym_suffix = '{suffix}')")
+    where_sql = " OR ".join(where_parts)
+
+    # Pull sym_suffix so we can remap share-class rows back to user-facing names
     query = f"""
-        SELECT date, time_m, price, size, ex, sym_root
+        SELECT date, time_m, price, size, ex, sym_root, sym_suffix
         FROM {library}.{table_name}
-        WHERE sym_root IN ({tickers_sql})
-        AND sym_suffix IS NULL
+        WHERE ({where_sql})
         AND tr_corr = '00'
         AND price > 0
     """
     try:
         df = db.raw_sql(query)
+        # Remap special rows so sym_root carries the user-facing ticker
+        if "sym_suffix" in df.columns:
+            if not df.empty:
+                for ticker, (root, suffix) in TICKER_MAPPING.items():
+                    mask = (df["sym_root"] == root) & (df["sym_suffix"] == suffix)
+                    df.loc[mask, "sym_root"] = ticker
+            df = df.drop(columns=["sym_suffix"])
         return df
     except Exception as e:
         error_msg = str(e)
         if "does not exist" in error_msg or "UndefinedTable" in error_msg:
-            # Holidays and other non-trading days — silent skip is intentional
+            # Holidays and non-trading days — silent skip is intentional
             return pd.DataFrame()
-        else:
-            log(f"  [ERROR] Query failed for {table_name}: {error_msg}")
-            return pd.DataFrame()
+        if _is_connection_broken(error_msg):
+            # Signal caller to reconnect rather than swallowing this silently
+            raise _ConnectionBroken(error_msg[:200])
+        log(f"  [ERROR] Query failed for {table_name}: {error_msg}")
+        return pd.DataFrame()
+
+
+def query_with_recovery(db, date_str, ticker_batch, max_attempts=3):
+    # Wrap query_single_day with auto-reconnect on connection failures.
+    # Returns (df, possibly_new_db).
+    for attempt in range(max_attempts):
+        try:
+            df = query_single_day(db, date_str, ticker_batch)
+            return df, db
+        except _ConnectionBroken as e:
+            log(f"  [RECOVERY] Connection lost ({attempt+1}/{max_attempts}): {str(e)[:120]}")
+            if attempt + 1 < max_attempts:
+                time.sleep(15 * (attempt + 1))  # backoff: 15s, 30s
+                db = _reconnect(db)
+    log(f"  [GIVE UP] Could not recover for {date_str}, skipping this batch")
+    return pd.DataFrame(), db
+
 
 def clean_daily_batch(df):
-    # Cleans and deduplicates the dataframe immediately to free RAM
+    # Clean and deduplicate the dataframe immediately to free RAM
     df["timestamp"] = pd.to_datetime(
         df["date"].astype(str) + " " + df["time_m"].astype(str),
         format='mixed'
@@ -132,13 +212,12 @@ def clean_daily_batch(df):
     return df
 
 def run_incremental_collection():
-    # Detects the last collected month and fetches only new data
+    # Detect the last collected month and fetch only new data
     log("====== WRDS TAQ INCREMENTAL COLLECTOR ======")
 
     universe = load_universe()
     log(f"Universe: {len(universe)} tickers")
 
-    # Auto-detect where to resume
     start_date = detect_last_collected_month(universe)
     end_date = datetime.now() - timedelta(days=1)  # WRDS data has ~1 day lag
 
@@ -153,7 +232,6 @@ def run_incremental_collection():
         log("[INFO] No trading days in range.")
         return
 
-    # Group days by month
     months = {}
     for day in trading_days:
         key = get_month_key(day)
@@ -170,7 +248,6 @@ def run_incremental_collection():
     for month_idx, (month_key, days) in enumerate(sorted(months.items()), 1):
         log(f"\n[{month_idx}/{len(months)}] {month_key}: {len(days)} trading days")
 
-        # Open direct-to-disk writers for every ticker
         writers = {}
         for ticker in universe:
             ticker_dir = os.path.join(VAULT_ROOT, ticker, "parquet", "training_data")
@@ -185,7 +262,7 @@ def run_incremental_collection():
 
             for batch_start in range(0, len(universe), TICKER_BATCH_SIZE):
                 batch = universe[batch_start: batch_start + TICKER_BATCH_SIZE]
-                df = query_single_day(db, date_str, batch)
+                df, db = query_with_recovery(db, date_str, batch)
 
                 if df.empty:
                     continue
@@ -206,7 +283,6 @@ def run_incremental_collection():
             if (day_idx + 1) % 5 == 0:
                 log(f"    Day {day_idx + 1}/{len(days)} | Streaming to SSD...")
 
-        # Close all writers for this month
         for ticker in universe:
             writers[ticker].close()
 
@@ -266,7 +342,7 @@ def run_full_rebuild(start_year: int = 2021):
 
             for batch_start in range(0, len(universe), TICKER_BATCH_SIZE):
                 batch = universe[batch_start: batch_start + TICKER_BATCH_SIZE]
-                df = query_single_day(db, date_str, batch)
+                df, db = query_with_recovery(db, date_str, batch)
 
                 if df.empty:
                     continue
@@ -290,13 +366,16 @@ def run_full_rebuild(start_year: int = 2021):
         for ticker in universe:
             writers[ticker].close()
 
-        # Write marker file atomically after all writers closed cleanly
-        os.makedirs(os.path.dirname(marker_path), exist_ok=True)
-        with open(marker_path, "w") as f:
-            f.write(f"{datetime.now().isoformat()}\n{month_rows} rows\n")
+        # Only mark complete if rows were actually written — empty months stay retryable
+        if month_rows > 0:
+            os.makedirs(os.path.dirname(marker_path), exist_ok=True)
+            with open(marker_path, "w") as f:
+                f.write(f"{datetime.now().isoformat()}\n{month_rows} rows\n")
+            log(f"  [COMPLETED] {month_key}: {month_rows:,} rows written to disk")
+        else:
+            log(f"  [WARN] {month_key}: 0 rows; marker NOT written, will be retried next run")
 
         total_rows += month_rows
-        log(f"  [COMPLETED] {month_key}: {month_rows:,} rows written to disk")
         time.sleep(2)
 
     db.close()

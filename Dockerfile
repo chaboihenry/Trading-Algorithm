@@ -20,8 +20,10 @@ COPY . .
 # Create directory for runtime logs
 RUN mkdir -p /app/logs
 
-# Fix git ownership check for volume-mounted repos
-RUN git config --global --add safe.directory /app
+# Configure git so EOD `git pull` from research node succeeds inside the container
+RUN git config --global --add safe.directory /app && \
+    git config --global user.email "bot@trading-algorithm.local" && \
+    git config --global user.name "Execution Node Bot"
 
 # Launch the 24/7 daemon directly
 CMD ["python", "-m", "the_execution_node.main_execution"]
