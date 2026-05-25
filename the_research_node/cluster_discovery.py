@@ -22,7 +22,7 @@ from the_utilities.split_adjustment import apply_split_adjustment
 # (e.g., GOOG/QQQ showed R^2=0.0003 at 5-min vs 0.95 at daily on the same pair).
 #
 # Switching to daily aligns with academic literature:
-#   - Avellaneda & Lee (2010): "Statistical Arbitrage in the U.S. Equities Market" — weekly returns
+#   - Avellaneda & Lee (2010): "Statistical Arbitrage in the U.S. Equities Market" — daily returns
 #   - Gatev, Goetzmann, Rouwenhorst (2006): "Pairs Trading: Performance of a Relative-Value
 #     Arbitrage Rule" — daily prices
 #   - Sarmento & Horta (2020): "Enhancing a Pairs Trading strategy with the application of
@@ -109,8 +109,11 @@ def load_daily_from_vault(tickers: list, lookback_days: int = 365):
 
     return pd.DataFrame(daily_prices).ffill().dropna()
 
-def load_vault_data(cluster_tickers: list, lookback_days: int = 90):
+def load_vault_data(cluster_tickers: list, lookback_days: int = 1260):
     # Daily bars for cointegration testing
+    # 1260 trading days ≈ 5y. At 5-min freq, 90d gave ~7000 bars; at daily, 90d gives
+    # only ~63 bars — below Johansen's reliable critical-value threshold.
+    # 5y matches WRDS extent and Gatev (2006) / Sarmento & Horta (2020) / Avellaneda & Lee (2010, 252d windows).
     cutoff_dt = pd.Timestamp.now(tz='UTC') - pd.Timedelta(days=lookback_days)
     cutoff_str = cutoff_dt.strftime('%Y%m%d')
 
@@ -353,7 +356,9 @@ def run_discovery_pipeline():
             ledger_entry["status"] = f"insufficient_mean_crossings ({crossings})"
             print(f"  >> [CROSSINGS] {'_'.join(cluster_tickers)}: "
                   f"in-sample crossings = {crossings}")
-        elif not (0.01 <= hl_days <= 15.0):
+        # Half-life bounds: lower=1.0d (sub-bar half-lives meaningless at daily freq)
+        # upper=30d (Sarmento & Horta 2020 cap; 15d was tuned for artificially short 5-min half-lives)
+        elif not (1.0 <= hl_days <= 30.0):
             ledger_entry["status"] = f"half_life_out_of_range ({hl_days:.2f}d)"
         elif ledger_entry["min_max_weight_ratio"] is not None and ledger_entry["min_max_weight_ratio"] < 0.15:
             ledger_entry["status"] = "degenerate_hedge_ratio"
