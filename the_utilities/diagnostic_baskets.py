@@ -24,10 +24,9 @@ from statsmodels.tsa.vector_ar.vecm import coint_johansen
 import statsmodels.api as sm
 
 from the_utilities.split_adjustment import apply_split_adjustment
+from the_utilities.paths import VAULT_ROOT
 
 warnings.filterwarnings('ignore')
-
-VAULT_ROOT = os.path.expanduser("~/quant_data/tick_data_storage")
 
 # Baskets from cluster discovery run 1 — all 10 with visible failure modes
 BASKETS_TO_INVESTIGATE = [

@@ -1,3 +1,14 @@
+import os
+
+# Quant data root — set QUANT_DATA_DIR env var to relocate vault to an external SSD
+# or alternate location. Default keeps it on the local home directory.
+QUANT_DATA_DIR = os.environ.get(
+    "QUANT_DATA_DIR",
+    os.path.expanduser("~/quant_data"),
+)
+VAULT_ROOT = os.path.join(QUANT_DATA_DIR, "tick_data_storage")
+SPLIT_FACTORS_PATH = os.path.join(QUANT_DATA_DIR, "split_factors.parquet")
+
 LOGS_DIR = "logs"
 MODELS_DIR = "the_models"
 EXECUTION_DATA_DIR = "the_execution_node/data"

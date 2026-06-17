@@ -10,7 +10,7 @@ from statsmodels.tsa.vector_ar.vecm import coint_johansen
 from statsmodels.tsa.stattools import adfuller
 import statsmodels.api as sm
 
-from the_utilities.paths import MODELS_DIR, CURATED_UNIVERSE_JSON, DISCOVERY_LEDGER_JSONL
+from the_utilities.paths import MODELS_DIR, CURATED_UNIVERSE_JSON, DISCOVERY_LEDGER_JSONL, VAULT_ROOT
 from the_utilities.split_adjustment import apply_split_adjustment
 
 # Discovery frequency: DAILY (changed from 5-min on 2026-05-24)
@@ -27,9 +27,6 @@ from the_utilities.split_adjustment import apply_split_adjustment
 #     Arbitrage Rule" — daily prices
 #   - Sarmento & Horta (2020): "Enhancing a Pairs Trading strategy with the application of
 #     Machine Learning" — daily prices
-
-# Local WSL2 ext4 storage
-VAULT_ROOT = os.path.expanduser("~/quant_data/tick_data_storage")
 
 
 def hurst_exponent(price_series, max_lag: int = 20):
@@ -109,11 +106,13 @@ def load_daily_from_vault(tickers: list, lookback_days: int = 365):
 
     return pd.DataFrame(daily_prices).ffill().dropna()
 
-def load_vault_data(cluster_tickers: list, lookback_days: int = 1260):
-    # Daily bars for cointegration testing
-    # 1260 trading days ≈ 5y. At 5-min freq, 90d gave ~7000 bars; at daily, 90d gives
-    # only ~63 bars — below Johansen's reliable critical-value threshold.
-    # 5y matches WRDS extent and Gatev (2006) / Sarmento & Horta (2020) / Avellaneda & Lee (2010, 252d windows).
+def load_vault_data(cluster_tickers: list, lookback_days: int = 365):
+    # Daily bars for cointegration testing.
+    # lookback_days is interpreted as CALENDAR days (pd.Timedelta(days=...) is calendar).
+    # 365 calendar days ≈ 252 trading days = 1-year formation window per:
+    #   - Avellaneda & Lee (2010): 252-day rolling PCA windows
+    #   - Sarmento & Horta (2020): 1-year formation period
+    #   - Gatev/Goetzmann/Rouwenhorst (2006): 12-month formation period
     cutoff_dt = pd.Timestamp.now(tz='UTC') - pd.Timedelta(days=lookback_days)
     cutoff_str = cutoff_dt.strftime('%Y%m%d')
 

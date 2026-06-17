@@ -5,10 +5,7 @@ import numpy as np
 import scipy.cluster.hierarchy as sch
 from scipy.spatial.distance import squareform
 from the_utilities.strategy_config import HRP_MAX_CAP, HRP_MIN_FLOOR
-from the_utilities.paths import CURATED_UNIVERSE_JSON
-
-# Local WSL2 ext4 storage — fast I/O for multi-day pulls
-VAULT_ROOT = os.path.expanduser("~/quant_data/tick_data_storage")
+from the_utilities.paths import CURATED_UNIVERSE_JSON, VAULT_ROOT
 
 # --- LÓPEZ DE PRADO HRP MATHEMATICS ---
 

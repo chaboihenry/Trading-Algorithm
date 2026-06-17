@@ -10,7 +10,7 @@ import os
 import numpy as np
 import pandas as pd
 
-SPLIT_FACTORS_PATH = os.path.expanduser("~/quant_data/split_factors.parquet")
+from the_utilities.paths import SPLIT_FACTORS_PATH
 
 _SPLIT_FACTORS = None  # cached at module level
 

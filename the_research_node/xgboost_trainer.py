@@ -8,10 +8,7 @@ from numba import jit
 from statsmodels.tsa.stattools import adfuller
 from sklearn.model_selection import RandomizedSearchCV
 
-from the_utilities.paths import MODELS_DIR, CURATED_UNIVERSE_JSON, ACTIVE_MODEL_VERSION
-
-# Local WSL2 ext4 storage — fast I/O for multi-day pulls
-VAULT_ROOT = os.path.expanduser("~/quant_data/tick_data_storage")
+from the_utilities.paths import MODELS_DIR, CURATED_UNIVERSE_JSON, ACTIVE_MODEL_VERSION, VAULT_ROOT
 
 
 # --- 1. DIB CONSTRUCTION ENGINE ---

@@ -1,6 +1,7 @@
 import os
 import gc
 import json
+import subprocess
 import time
 import wrds
 import pandas as pd
@@ -9,7 +10,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from datetime import datetime, timedelta
 
-from the_utilities.paths import LOGS_DIR
+from the_utilities.paths import LOGS_DIR, VAULT_ROOT
 
 # --- CONFIGURATION ---
 WRDS_USERNAME = "henryvianna"
@@ -25,14 +26,14 @@ STRICT_SCHEMA = pa.schema([
 ])
 
 TICKER_BATCH_SIZE = 30
-# Local WSL2 ext4 storage — fast I/O for multi-day pulls
-VAULT_ROOT = os.path.expanduser("~/quant_data/tick_data_storage")
 
 # Share-class encoded tickers: TAQ stores these as (sym_root, sym_suffix)
 # rather than the plain ticker. Add entries when universe_sweep finds them.
 TICKER_MAPPING = {
     "GOOGL": ("GOOG", "L"),  # Alphabet Class A
     "CMCSA": ("CMCS", "A"),  # Comcast Class A
+    "BRK-B": ("BRK", "B"),   # Berkshire Hathaway Class B
+    "BF-B":  ("BF",  "B"),   # Brown-Forman Class B
 }
 
 # Error substrings that indicate the WRDS connection has died and needs reconnect
@@ -49,6 +50,66 @@ CONNECTION_ERROR_PATTERNS = [
 class _ConnectionBroken(Exception):
     """Internal signal: WRDS connection died, caller should reconnect."""
     pass
+
+
+def ensure_vault_accessible(max_retries: int = 5) -> bool:
+    """
+    Check that VAULT_ROOT is accessible. If not, attempt to remount the SSD
+    via drvfs and retry. Returns True if vault is accessible after attempts,
+    False otherwise.
+    """
+    for attempt in range(max_retries):
+        # First, check if path is currently accessible
+        try:
+            if os.path.exists(VAULT_ROOT):
+                # Touch a probe to confirm it's not stale
+                probe = os.path.join(VAULT_ROOT, '.mount_probe')
+                try:
+                    with open(probe, 'w') as f:
+                        f.write('ok')
+                    os.remove(probe)
+                    return True
+                except OSError:
+                    pass  # Stale mount — proceed to remount
+        except OSError:
+            pass
+
+        # Attempt remount
+        print(f'[REMOUNT] Vault inaccessible (attempt {attempt+1}/{max_retries}), remounting...')
+        subprocess.run(['sudo', '-n', 'umount', '-l', '/mnt/e'],
+                       stderr=subprocess.DEVNULL)
+        subprocess.run(['sudo', '-n', 'mount', '-t', 'drvfs', 'E:', '/mnt/e',
+                        '-o', 'uid=1000,gid=1000'],
+                       stderr=subprocess.DEVNULL)
+        time.sleep(2)
+
+    return False
+
+
+def get_tickers_needing_data(universe: list, month_key: str) -> list:
+    """
+    Return the subset of tickers from universe that don't already have a parquet
+    file for the given month. Used to filter the WRDS query to ONLY tickers we
+    actually need data for, so universe expansions don't trigger redundant
+    re-queries of already-pulled tickers.
+
+    Args:
+        universe: list of ticker symbols (user-facing, e.g. 'BRK-B', 'GOOGL')
+        month_key: month identifier in 'YYYY_MM' format
+
+    Returns:
+        list of tickers from universe whose parquet for this month is missing
+    """
+    # Per-ticker file-existence check — gate is the actual parquet file
+    needed = []
+    for ticker in universe:
+        parquet_path = os.path.join(
+            VAULT_ROOT, ticker, 'parquet', 'training_data',
+            f'{month_key}.parquet'
+        )
+        if not os.path.exists(parquet_path):
+            needed.append(ticker)
+    return needed
 
 
 def load_universe():
@@ -295,6 +356,11 @@ def run_incremental_collection():
 
 def run_full_rebuild(start_year: int = 2021):
     # Full collection from scratch — use when vault is empty or corrupted
+
+    # Verify SSD vault is accessible before starting
+    if not ensure_vault_accessible():
+        raise RuntimeError('Cannot access vault at startup. Check SSD connection.')
+
     log(f"====== WRDS TAQ FULL REBUILD FROM {start_year} ======")
 
     universe = load_universe()
@@ -322,26 +388,45 @@ def run_full_rebuild(start_year: int = 2021):
     for month_idx, (month_key, days) in enumerate(sorted(months.items()), 1):
         log(f"\n[{month_idx}/{len(months)}] {month_key}: {len(days)} trading days")
 
-        # Resumption guard: skip month if completion marker exists
-        marker_path = os.path.join(VAULT_ROOT, "_markers", f"{month_key}.done")
-        if os.path.exists(marker_path):
-            log(f"  [SKIP] {month_key} already complete (marker found)")
+        # Per-ticker skip: only query tickers whose parquet for this month is missing.
+        # Universe expansions no longer trigger redundant re-queries of pulled tickers.
+        tickers_needed = get_tickers_needing_data(universe, month_key)
+        if not tickers_needed:
+            log(f"  [SKIP] {month_key}: all {len(universe)} tickers already have data")
             continue
 
+        log(f"  [PROCESSING] {month_key}: querying {len(tickers_needed)}/{len(universe)} tickers")
+
+        marker_path = os.path.join(VAULT_ROOT, "_markers", f"{month_key}.done")
+
         writers = {}
-        for ticker in universe:
+        for ticker in tickers_needed:
             ticker_dir = os.path.join(VAULT_ROOT, ticker, "parquet", "training_data")
-            os.makedirs(ticker_dir, exist_ok=True)
-            file_path = os.path.join(ticker_dir, f"{month_key}.parquet")
-            writers[ticker] = pq.ParquetWriter(file_path, STRICT_SCHEMA, compression="zstd")
+            # Retry per-ticker writer setup on SSD disconnect (Errno 19)
+            write_attempts = 0
+            while write_attempts < 3:
+                try:
+                    os.makedirs(ticker_dir, exist_ok=True)
+                    file_path = os.path.join(ticker_dir, f"{month_key}.parquet")
+                    writers[ticker] = pq.ParquetWriter(file_path, STRICT_SCHEMA, compression="zstd")
+                    break  # Success, exit retry loop
+                except OSError as e:
+                    if e.errno == 19:  # No such device
+                        print(f'[ERROR] SSD disconnected during write for {ticker}, attempting remount...')
+                        if not ensure_vault_accessible():
+                            raise RuntimeError('Vault unrecoverable after remount attempts')
+                        write_attempts += 1
+                        time.sleep(5)
+                    else:
+                        raise  # Different error, propagate
 
         month_rows = 0
 
         for day_idx, day in enumerate(days):
             date_str = day.strftime("%Y%m%d")
 
-            for batch_start in range(0, len(universe), TICKER_BATCH_SIZE):
-                batch = universe[batch_start: batch_start + TICKER_BATCH_SIZE]
+            for batch_start in range(0, len(tickers_needed), TICKER_BATCH_SIZE):
+                batch = tickers_needed[batch_start: batch_start + TICKER_BATCH_SIZE]
                 df, db = query_with_recovery(db, date_str, batch)
 
                 if df.empty:
@@ -363,17 +448,18 @@ def run_full_rebuild(start_year: int = 2021):
             if (day_idx + 1) % 5 == 0:
                 log(f"    Day {day_idx + 1}/{len(days)} | Streaming to SSD...")
 
-        for ticker in universe:
+        for ticker in tickers_needed:
             writers[ticker].close()
 
-        # Only mark complete if rows were actually written — empty months stay retryable
+        # Marker file: advisory only — records which months were attempted by which collector
+        # run. Skip-logic is now per-ticker file existence (see get_tickers_needing_data).
         if month_rows > 0:
             os.makedirs(os.path.dirname(marker_path), exist_ok=True)
             with open(marker_path, "w") as f:
                 f.write(f"{datetime.now().isoformat()}\n{month_rows} rows\n")
             log(f"  [COMPLETED] {month_key}: {month_rows:,} rows written to disk")
         else:
-            log(f"  [WARN] {month_key}: 0 rows; marker NOT written, will be retried next run")
+            log(f"  [WARN] {month_key}: 0 rows; marker NOT written")
 
         total_rows += month_rows
         time.sleep(2)
