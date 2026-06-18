@@ -11,9 +11,10 @@ import os
 import wrds
 import pandas as pd
 
+from the_utilities.paths import SPLIT_FACTORS_PATH
+
 WRDS_USERNAME = "henryvianna"
 UNIVERSE_PATH = "universe.txt"
-OUTPUT_PATH = os.path.expanduser("~/quant_data/split_factors.parquet")
 START_DATE = "2021-01-01"
 END_DATE = "2026-12-31"
 
@@ -76,9 +77,9 @@ def main():
         print(f"  {sorted(missing)}")
         print("  These may be ETFs (no CRSP coverage) or ticker mismatches.")
 
-    os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
-    df.to_parquet(OUTPUT_PATH, compression='zstd')
-    print(f"\nSaved to {OUTPUT_PATH}")
+    os.makedirs(os.path.dirname(SPLIT_FACTORS_PATH), exist_ok=True)
+    df.to_parquet(SPLIT_FACTORS_PATH, compression='zstd')
+    print(f"\nSaved to {SPLIT_FACTORS_PATH}")
 
 
 if __name__ == "__main__":
