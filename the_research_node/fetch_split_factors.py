@@ -50,6 +50,10 @@ def main():
 
     print(f"Fetching cfacpr from CRSP {START_DATE} to {END_DATE}...")
     df = fetch_split_factors(db, universe)
+    # Collapse duplicate (ticker, date) rows from multi-permno ticker reuse
+    df = df.sort_values(['ticker', 'date']).drop_duplicates(
+        ['ticker', 'date'], keep='last'
+    )
     db.close()
 
     print(f"Fetched {len(df):,} rows for {df['ticker'].nunique()} tickers.")
