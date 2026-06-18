@@ -1,0 +1,466 @@
+==========================================================================
+TRADING-ALGORITHM — KNOWN ISSUES / RESEARCH DEBT
+==========================================================================
+Last updated: 2026-06-17
+Severity: CRITICAL | HIGH | MEDIUM | LOW
+Status:   OPEN | IN-PROGRESS | RESOLVED
+
+Context: strategy pivoted from 5-min to DAILY frequency (2026-05).
+Universe pivoted from individual equities to ETF-spread focus (2026-06)
+after individual-equity pairs failed cointegration across the 2021-2026
+regime. Many components were written for the OLD intraday strategy and
+have not been brought into line with the daily/ETF direction.
+
+--------------------------------------------------------------------------
+META-LABELER  (the_research_node/xgboost_trainer.py)
+--------------------------------------------------------------------------
+[ML-1] CRITICAL | OPEN | Frequency mismatch — whole file is intraday
+  Built on microstructure machinery: Dollar Imbalance Bars at $50M
+  threshold (AFML Ch 2), 1-min resampling, z-score over 50 DIBs in
+  event-time. The strategy now trades DAILY cointegrated spreads with
+  day-scale half-lives (DUK basket ~87d; HYG/TLT only passes at 252d
+  window). Per AFML Ch 3, the meta-model must train on the SAME primary
+  signals the live bot generates. Training on 1-min z-crossings while the
+  bot fires on daily z-crossings means the learned P(profit) is calibrated
+  to a strategy we are not running.
+  FIX: full rebuild at daily frequency. Drop DIB engine + 1-min resample.
+  Keep frac-diff (Ch 5), triple-barrier (Ch 3), purged K-fold CV (Ch 7),
+  fed with daily inputs. Define the daily primary signal FIRST (z-window,
+  threshold, vertical-barrier horizon relative to each basket half-life);
+  labels flow from that.
+
+[ML-2] HIGH | OPEN | Hardcoded "2024_01" cutoff (appears twice)
+  construct_m1_dibs and the price-load loop both filter f >= "2024_01.parquet",
+  using 2024+ only and discarding 2021-2023. Inconsistent with the
+  252-day / 5-year windows cluster_discovery uses.
+  FIX: parameterize the lookback; align with the window the primary model
+  is validated on.
+
+[ML-3] MEDIUM | OPEN | scale_pos_weight may be inverted
+  scale_pos_weight = num_neg/num_pos "to respect minority wins." If the
+  reversion signal (z>2.5) wins MORE than half the time, positives are the
+  majority and this up-weights the wrong class.
+  FIX: verify against actual primary-signal win rate before setting.
+
+[ML-4] MEDIUM | OPEN | pt_sl=[1,2] risk ratio unexamined
+  Profit-take 1x vol, stop 2x vol (risk 2 to make 1). Possibly fine for a
+  high-win-rate reversion bet, but assumed rather than justified.
+  FIX: interrogate against measured win rate + payoff once daily.
+
+[ML-5] LOW | OPEN | find_optimal_d leakage
+  ADF run on the FULL series to choose d, then applied. Preprocessing
+  parameter chosen using test-fold data.
+  FIX: fit d on train folds only, or fix d a priori per spread.
+
+--------------------------------------------------------------------------
+REGIME DETECTION  (execution node CUSUM filter)
+--------------------------------------------------------------------------
+[RG-1] HIGH | OPEN | CUSUM is market-wide, not per-spread
+  compute_cusum_states / check_regime_safe_now run on SPY daily returns
+  ONLY. The "4 tickers" (SPY/VIX/IEF/HYG) are just columns in the macro
+  CSV; only SPY is used. This is a broad-market crisis on/off switch, NOT
+  a per-spread cointegration-break detector. It cannot time "when HYG/TLT
+  is cointegrated vs broken."
+  FIX: regime layer should MIRROR the rolling-cointegration diagnostic
+  engine (the_utilities/diagnostic_rolling_cointegration.py) — per-spread
+  rolling Engle-Granger / Johansen p-value gating applied live. Consider
+  Bai-Perron (2003) for multiple structural breaks per spread. CUSUM
+  (AFML Ch 17) can stay as a separate macro kill-switch, but it is not the
+  per-basket timing mechanism.
+
+[RG-2] MEDIUM | OPEN | Regime logic lives only in execution node
+  Never integrated into research/backtest, so any backtest ignores the
+  same gate the live bot applies. Research and execution must share one
+  regime definition or backtests are invalid.
+
+--------------------------------------------------------------------------
+STRATEGY / METHODOLOGY  (from cointegration investigation)
+--------------------------------------------------------------------------
+[ST-1] HIGH | OPEN | Individual-equity pairs do not cointegrate 2021-2026
+  BAC/JPM (corr 0.77 but coint p=0.44), HD/LOW, MA/V failed across 71
+  rolling 252-day windows. Confirms Krauss (2017) post-2010 decay.
+  DIRECTION: favor ETF spreads (credit, yield-curve, sector) over stocks.
+
+[ST-2] HIGH | OPEN | HYG/TLT is regime-dependent, not always-on
+  Cointegrated in ~34% of 252-day rolling windows (p_min=0.003). A
+  CONDITIONAL signal requiring a timing layer (see RG-1), not a static pair.
+
+[ST-3] CRITICAL | OPEN | Multiple-testing discipline (151 tickers)
+  Expanded universe = 11,325 pairs; ~566 false positives at p<0.05 by
+  chance (AFML Ch 11; Bailey & Lopez de Prado deflated Sharpe). EVERY
+  candidate basket from cluster_discovery MUST pass the rolling-coint
+  diagnostic (cointegrated in a meaningful fraction of windows) before it
+  is trusted. A single Johansen pass is NOT evidence.
+
+--------------------------------------------------------------------------
+EXECUTION-NODE BACKLOG  (from earlier audit — RE-VERIFY against current code)
+--------------------------------------------------------------------------
+[EX-1] MEDIUM | OPEN | Per-minute eval loop should become daily
+  main_execution.py evaluates every minute; daily strategy needs once-daily
+  evaluation at a fixed time.
+
+[EX-2] MEDIUM | OPEN | z-score computed on wrong frequency
+  stat_arb_engine.py should compute z on the daily-resampled spread.
+
+[EX-3] LOW | OPEN | entry_z=0 logging bug
+  trade_history.csv records entry_z=0 for every row though runtime [SIGNAL]
+  logs show real extreme z. Bug between signal-gen and CSV write
+  (order_router.py ~line 411). Logging only, not strategy.
+
+[EX-4] LOW | OPEN | EOD force-liquidation log spam
+  Logs every minute after 15:50 even with 0 open positions. Add guard.
+
+--------------------------------------------------------------------------
+OPEN — TO REVIEW (directory walkthrough in progress)
+--------------------------------------------------------------------------
+[ ] portfolio_allocator.py — confirm HRP uses daily-frequency returns
+[ ] orchestrator.py — frequency-assumption audit
+[ ] bot data ingestion — 5-min WebSocket vs daily polling
+[ ] end-to-end integration test on paper before container rebuild
+[ ] (add findings here as the walkthrough continues)
+
+==========================================================================
+
+--------------------------------------------------------------------------
+PORTFOLIO ALLOCATOR  (the_research_node/portfolio_allocator.py)
+  [GOOD] Already daily-frequency (resamples to 1D). HRP math is faithful
+  to AFML Ch 16. Resolves the "verify HRP uses daily returns" open item.
+--------------------------------------------------------------------------
+[PA-1] HIGH | OPEN | pct_change() on spread level is wrong return def
+  spread_returns = spread_val.pct_change(). Spread is a signed mean-
+  reverting series (mixed-sign cointegration weights) oscillating around an
+  arbitrary constant that can be near zero or cross zero -> pct_change
+  explodes (e.g. +0.01 to +0.5 = +4900%) and is meaningless even when
+  positive. HRP's cov/corr matrices are then built on distorted numbers,
+  so capital allocation is computed on noise.
+  FIX: use spread_val.diff() (daily PnL per unit position) normalized by
+  gross notional sum(|w_i|*P_i), or standardize returns before HRP.
+
+[PA-2] MEDIUM | OPEN | HRP degenerate with too few baskets
+  HRP's value is taming ill-conditioned cov across MANY assets. With 0-1
+  surviving baskets, clustering is meaningless (equal-weight fallback only
+  triggers for <2). If universe yields few baskets, prefer honest equal-
+  weight over HRP theater.
+
+[PA-3] LOW | OPEN | cap/floor feasibility unchecked
+  50-iteration cap+floor loop has no feasibility check (needs N*floor <= 1
+  <= N*cap). If infeasible it exits unconverged, then renormalizes,
+  silently violating cap/floor.
+
+--------------------------------------------------------------------------
+ORCHESTRATOR  (the_research_node/orchestrator.py)
+--------------------------------------------------------------------------
+[ORCH-1] HIGH | OPEN | Subprocess env inheritance — QUANT_DATA_DIR
+  All steps run subprocess.run([sys.executable, -m, module]) inheriting the
+  parent env. Run as systemd/cron/detached (no .bashrc), QUANT_DATA_DIR is
+  absent, VAULT_ROOT defaults to the DELETED ~/quant_data, every step fails
+  silently. Same footgun hit repeatedly by hand.
+  FIX: set QUANT_DATA_DIR explicitly and pass via subprocess env= arg.
+
+[ORCH-2] MEDIUM | OPEN | No SSD-mount guard before steps
+  Unattended scheduler runs against /mnt/e with no mount check; dies on a
+  stale mount. FIX: call ensure_vault_accessible() before each step.
+
+[ORCH-3] MEDIUM | OPEN | git pull --rebase can wedge the repo
+  On rebase conflict (both nodes touch curated_universe.json), code logs +
+  returns but never runs git rebase --abort, leaving repo mid-rebase for
+  the next run. FIX: abort-on-failure.
+
+[ORCH-4] LOW-MED | OPEN | No subprocess timeouts
+  A hung parquet read or WRDS socket blocks subprocess.run forever, freezing
+  the scheduler. FIX: add timeout= to run_step.
+
+[ORCH-5] MEDIUM | OPEN | Basket-refresh cadence vs strategy horizon
+  cluster_discovery re-run Mon/Thu changes the tradeable set twice weekly;
+  with day-to-month half-lives this churns positions and pays slippage.
+  Selection frequency and regime-gating frequency must be coherent.
+
+--------------------------------------------------------------------------
+DATA BACKFILL
+--------------------------------------------------------------------------
+[DATA-1] MEDIUM | OPEN | GOOGL/CMCSA pre-mapping months are zero-row
+  GOOGL (GOOG+L) and CMCSA (CMCS+A) had zero-row parquets for months pulled
+  before the TICKER_MAPPING fix. Confirmed 2026-06-17 that the mapping now
+  works (2022_01: GOOGL 2.7M rows, CMCSA 3.0M rows after re-pull).
+  FIX: after ETF pull completes, find their zero-row/missing months, delete
+  those files, re-run collector — per-ticker check backfills only the gaps.
+
+--------------------------------------------------------------------------
+STRATEGY CONFIG  (the_utilities/strategy_config.py)
+--------------------------------------------------------------------------
+[CFG-1] CRITICAL | OPEN | "78" (5-min bars/day) baked into many constants
+  BARS_PER_YEAR = 252*78; WARMUP_BARS=2340 (30d*78); COOLDOWN_BARS=6
+  (30min/5); TIME_BARRIER=120 bars; all EOD/entry-window minute clocks.
+  None valid at daily frequency. FIX during rebuild: re-express every
+  bar-count and intraday-clock value in daily terms, or delete (a daily
+  multi-day-hold strategy should not force-liquidate at 15:50).
+
+[CFG-2] HIGH | OPEN | Z_THRESH/PT_SKEW/SL_SKEW are 5-min-optimized
+  2.39 / 1.90 / 1.75 — suspiciously precise = fitted on the 5-min backtest.
+  Re-using at daily frequency is silent transfer of overfit params. Must be
+  re-derived (or set to round defensible priors) on the daily strategy.
+
+[CFG-3] MEDIUM | OPEN | AI_THRESH = 0.0 makes meta-labeler gate dead
+  Engine: "if ai_prob <= AI_THRESH: continue" with threshold 0.0 rejects
+  only prob==0. Meta-labeler runs but never filters. Either it's effectively
+  disabled (then why compute it) or the threshold was never set. Decide
+  intended cutoff post-retrain.
+
+[CFG-4] LOW | OPEN | Duplicate definitions
+  COOLDOWN_MINUTES and COOLDOWN_BARS each defined twice. Dedupe.
+
+--------------------------------------------------------------------------
+STAT-ARB ENGINE  (the_execution_node/strategies/stat_arb_engine.py)
+--------------------------------------------------------------------------
+[ENG-1] CRITICAL | OPEN | z-score window hardcoded to 5-min (the EX-2 bug)
+  window = max(int(half_life * 78), 50) in BOTH generate_signals and
+  check_exits. half_life is in DAYS from cluster_discovery; *78 converts to
+  5-min bars. On a daily live_matrix this yields windows of hundreds-to-
+  thousands of daily bars (exceeds available data). FIX: at daily frequency
+  window = max(int(half_life * k), floor) with k=1 (or small multiple).
+
+[ENG-2] CRITICAL | OPEN | vol scaled by sqrt(78)
+  vol_daily = vol * np.sqrt(78) assumes 5-min bars. On daily bars vol is
+  already daily; this inflates ~8.8x, blowing out pt/sl thresholds.
+  FIX: drop the sqrt(78) at daily frequency.
+
+[ENG-3] HIGH | OPEN | Position lifecycle counted in bars
+  time_barrier=120 bars, bars_held, entry_bar. Bar-counting assumes fixed
+  bar duration. FIX: express holding horizon in days relative to half-life.
+
+[ENG-4] HIGH | OPEN | Welded to intraday meta-labeler (see ML-1)
+  Imports find_optimal_d/apply_frac_diff from xgboost_trainer and rebuilds
+  the same 3 features live. Correct in principle (live features must match
+  training) but means engine MUST be updated in lockstep with the daily
+  meta-labeler rebuild or live features won't match the retrained model.
+
+  [GOOD] spread_returns uses .diff() correctly here — this is the exact fix
+  PA-1 needs in portfolio_allocator. Make the two consistent.
+  [GOOD] Fractional-Kelly sizing and 4-barrier exit logic are sound; keep.
+
+--------------------------------------------------------------------------
+LIVE STREAMER  (the_execution_node/core/live_streamer.py)
+--------------------------------------------------------------------------
+[STR-1] CRITICAL | OPEN | WebSocket minute-bar ingestion is the root of
+  the intraday operating model. subscribe_bars delivers minute bars ->
+  live_matrix is per-minute -> every *78 / sqrt(78) / bar-count downstream
+  exists because of this. A daily strategy that evaluates once/day should
+  NOT hold an infinite async WebSocket loop to collect minutes.
+  FIX: REPLACE this class with a once-daily REST poll (Alpaca get_bars,
+  TimeFrame.Day) appending to a daily matrix, engine runs once. Deletes the
+  async/threading/lock/rolling-minute apparatus entirely. This is the
+  linchpin change that makes ENG-1/2/3 and CFG-1 coherent.
+
+[STR-2] HIGH | OPEN | flat_list schema mismatch
+  _load_universe reads data.get("flat_list", []) but engine/allocator read
+  data.get("baskets", {}). If curated_universe.json has no flat_list key,
+  active_tickers is silently empty and the streamer is a no-op. VERIFY the
+  JSON schema; if absent, derive tickers from baskets instead.
+
+[STR-3] LOW | OPEN | 1-min vs 5-min internal inconsistency (latent)
+  Streamer comment + subscribe_bars = 1-min bars, but engine/config *78 and
+  sqrt(78) assume 5-min bars (78 = 6.5h*12). Even for the OLD intraday
+  strategy the window/vol math was off by the 1-min-vs-5-min factor.
+
+[STR-4] LOW | OPEN | ffill() on full matrix every tick under lock
+  _handle_bar ffills the entire up-to-200-row frame on every incoming bar,
+  holding the lock. O(rows*cols) per tick, lock contention at 151 tickers.
+  Moot once replaced by daily poll.
+
+[STR-2 UPDATE 2026-06-17] RESOLVED — flat_list key exists in
+  curated_universe.json (7 tickers, stale from an earlier run). Streamer
+  reads it correctly. Not a bug. Note: engine/allocator read "baskets",
+  streamer reads "flat_list" — two access patterns, keep consistent but
+  not broken. Current 7-ticker flat_list is leftover state (current
+  cluster_discovery produces 0 baskets), consistent with bot holding cash.
+
+--------------------------------------------------------------------------
+MAIN EXECUTION  (the_execution_node/main_execution.py)
+--------------------------------------------------------------------------
+[MEX-1] CRITICAL | OPEN | EVAL_INTERVAL=60 — per-minute eval loop (EX-1)
+  _execute_trading_day loops every 60s: exits/EOD/entries/increment. Acts on
+  minute bars every minute = the eval-cadence half of overtrading. Daily
+  strategy should run this sequence ONCE per day after close.
+  FIX: replace intraday while-loop with a single daily post-close evaluation.
+
+[MEX-2] HIGH | OPEN | "bars_held" actually counts minutes
+  _increment_bars_held ticks once per 60s cycle, so bars_held = minutes.
+  Engine compares bars_held >= time_barrier(120) => 2h timeout, but config
+  intent (via *78) was 5-min bars => 10h. Runtime != intended. Incoherent
+  bar abstraction across codebase (ties to STR-3, ENG-3).
+  FIX: at daily cadence, increment once per day; express barrier in days.
+
+[MEX-3] LOW | OPEN | EOD liquidation log spam (EX-4)
+  _force_eod_liquidation logs "[EOD]..." unconditionally before checking for
+  positions; after 15:50 it fires every 60s even with 0 positions.
+  FIX: guard "if current_minutes < EOD_LIQ or not self.open_positions: return".
+
+  [GOOD] reconcile_state_with_broker() — startup orphan-flatten + phantom-
+  purge against Alpaca. Proper defensive reconciliation. KEEP through rebuild.
+
+--------------------------------------------------------------------------
+ORDER ROUTER  (the_execution_node/core/order_router.py)
+--------------------------------------------------------------------------
+[ROUTER-1] MEDIUM | OPEN | exit_z logs stale (frozen-at-entry) z — real EX-3
+  close_spread logs exit_z = position_data.get("current_z"). But current_z is
+  set once at entry (signal_data assigned by reference into open_positions)
+  and NEVER refreshed: check_exits computes a fresh current_z LOCALLY but does
+  not write it back to open_positions[spread_name]. So exit_z == entry_z in
+  every logged row. The reported entry_z=0 rows predate the entry_z snapshot
+  line in _process_entries (already added since). VERIFY on new trades: if
+  entry_z == exit_z, confirmed.
+  FIX: in _process_exits, stamp the freshly-computed z into pos_data before
+  close_spread reads it (or have check_exits return it).
+
+  [GOOD] Pre-flight validation (leg cap, hedge sanity, concentration,
+  shortability, affordability) all BEFORE submit; partial-fill compensation
+  flattens filled legs on timeout to restore neutrality; fill polling. This is
+  the most solid file in the codebase — frequency-agnostic. KEEP.
+
+--------------------------------------------------------------------------
+UTILITIES — trade_logger.py / basket_naming.py
+  [GOOD] trade_logger.py is a clean faithful CSV writer (schema matches
+  caller, appends, headers-once, thread-safe). Does NOT zero entry_z/exit_z
+  — confirms ROUTER-1 bug is upstream, not in logging. No issue.
+--------------------------------------------------------------------------
+[NAME-1] MEDIUM | OPEN | Canonicalization helpers exist but lookups bypass them
+  basket_naming.py defines canonical_basket_key / canonical_ticker_set /
+  baskets_equivalent (correct, order-independent). But stat_arb_engine
+  (generate_signals, check_exits) and router look baskets up by EXACT dict
+  key: curated_baskets.get(spread_name). If a stored open_positions key has
+  different ticker ordering than the curated_universe key (older run,
+  different sort), .get() returns None -> position flagged "basket_removed"
+  -> purged. Spurious exit from naming mismatch, not a real drop.
+  FIX: route all basket lookups through canonical_ticker_set / 
+  baskets_equivalent, or canonicalize keys on write AND read.
+
+--------------------------------------------------------------------------
+BASH / AUTOMATION  (start_execution_node.sh / start_research_node.sh)
+--------------------------------------------------------------------------
+[SH-1] HIGH | OPEN | start_research_node.sh: wrong venv path
+  "source venv/bin/activate" — project is uv-managed (.venv via uv run), no
+  venv/ dir. With set -e, script dies on this line before the while-loop.
+  Research automation likely non-functional as written.
+  FIX: use the uv invocation (uv run python -m ...) or correct the path.
+
+[SH-2] HIGH | OPEN | No QUANT_DATA_DIR export in either script (ORCH-1)
+  Neither script exports QUANT_DATA_DIR before launching. Research node
+  reads the vault every run -> all subprocesses default to the DELETED
+  ~/quant_data and fail. Most consequential form of the env footgun.
+  FIX: export QUANT_DATA_DIR=/mnt/e/quant_data (or per-machine value) at top.
+
+[SH-3] HIGH | OPEN | set -e aborts before the restart loop
+  Both scripts: set -e at top means any failure in startup (git pull, venv
+  activate, file checks) exits the WHOLE script before/around the while-true
+  loop — defeating crash-recovery. A transient git-pull failure in
+  start_execution_node.sh kills the launcher; nothing restarts it.
+  FIX: scope set -e carefully, or move fragile startup ops inside the loop
+  with explicit error handling so supervision survives transient failures.
+
+  [GOOD] start_execution_node.sh has while-true restart-on-crash (30s) +
+  payload fail-fast. The supervision design is right; set -e undermines it.
+
+[SH-4] MEDIUM | OPEN | git pull in launcher has no conflict/identity guard
+  start_execution_node.sh runs bare "git pull origin main". Ties to the
+  Dockerfile identity fix and ORCH-3 rebase-wedge. Under set -e a divergent
+  branch / conflict aborts the launcher entirely.
+  FIX: handle pull failure gracefully (log + continue with existing payload).
+
+--------------------------------------------------------------------------
+UTILITIES — split_adjustment.py / diagnostic_baskets.py
+--------------------------------------------------------------------------
+[SPLIT-1] MEDIUM | OPEN | cfacpr forward-fill direction needs verification
+  apply_split_adjustment forward-fills cfacpr across dates. Correct ONLY if
+  split_factors.parquet has cfacpr per trading day (or fill semantics match
+  CRSP's cumulative-factor definition). If it stores only split-event rows,
+  ffill may propagate stale factors. VERIFY granularity of the parquet.
+  (Empirical GOOG_QQQ corr flip confirmed dtype fix, NOT fill direction.)
+
+[SPLIT-2] LOW | OPEN | aligned.loc[ts_dates] fragile + slow
+  Final lookup indexes millions of per-tick rows via .loc against a
+  unique-date index. Works in current path but raises on any NaT/tz slip;
+  .map() or merge_asof cleaner. Low priority.
+
+[DIAG-1] INFO | NOTE | diagnostic vs engine disagree on half-life units
+  diagnostic_baskets correctly uses bars_per_day = 1 for daily, 78 for 5-min.
+  stat_arb_engine hardcodes *78 regardless (ENG-1). The diagnostic reports
+  correct half-life DAYS; the engine then misreads them. Cross-ref ENG-1.
+  diagnostic_baskets is a dev tool (not production path) — otherwise clean.
+
+--------------------------------------------------------------------------
+MISSING COMPONENT — BACKTESTER
+--------------------------------------------------------------------------
+[BT-1] CRITICAL | OPEN | No backtester exists; strategy has never been
+  validated on historical data. Config references SLIPPAGE_BPS_BACKTEST=7.0
+  and COOLDOWN_BARS "for backtester" — a backtester was intended.
+  WHY IT MATTERS:
+   - CFG-2 (re-derive Z_THRESH/PT_SKEW/SL_SKEW) has no principled basis
+     without one — setting them by intuition = overfitting by vibes.
+   - ST-2 (HYG/TLT regime-dependent) can only be validated by simulating
+     the conditional strategy over history.
+   - The original slippage bleed (gross +200, slip -770) took weeks of live
+     trades to discover; a backtest shows it in seconds.
+   - Paper trading validates EXECUTION MECHANICS, not STRATEGY EDGE. These
+     are different tests; forward paper-testing is orders of magnitude slower
+     and cannot use purged CV or test multiple parameter sets.
+  BUILD: daily backtester over 2021-2026 with slippage model, purged K-fold
+  CV (AFML Ch 7 — already implemented in xgboost_trainer), triple-barrier
+  exits, per-basket. Output: Sharpe, max DD, turnover, net-of-cost PnL.
+  GATE: deploy to paper ONLY if backtest shows positive risk-adjusted
+  return after realistic costs.
+
+[SPLIT-1 UPDATE 2026-06-17] RESOLVED (fill logic) — split_factors has 1005
+  rows/ticker, one per trading day, cfacpr fully populated. NVDA shows
+  1.0/10.0/40.0 (2024 10:1 + cumulative 2021 4:1), TSLA 1.0/3.0 (2022 3:1).
+  Forward-fill is correct gap-filling. Adjustment works.
+
+[SPLIT-3] HIGH | OPEN | Split factors STOP at 2024-12-31; data runs to 2026
+  split_factors.parquet coverage ends 2024-12-31 but tick data extends to
+  2026-05+. Any ticker that split in 2025-2026 gets 2025+ prices divided by
+  the frozen Dec-2024 cfacpr -> ~Nx discontinuity at the split date in the
+  adjusted series. In a spread leg this mimics a massive divergence: kills
+  real cointegration OR fires phantom extreme-z trades live.
+  FIX: re-run fetch_split_factors.py to extend cfacpr coverage through
+  present before trusting any 2025-2026 cointegration result.
+
+[SPLIT-3 UPDATE 2026-06-17] EXPANDED to SPLIT-4 — two coverage holes:
+[SPLIT-4] HIGH | OPEN | split_factors.parquet is stale AND incomplete
+  (a) 39/151 tickers have ZERO split coverage — the 38 new ETFs were never
+      added. Most ETFs don't split (raw passthrough is fine), BUT USO/UNG and
+      leveraged/inverse ETNs (UVXY/VXX/SQQQ/TQQQ) do reverse-split. Verify
+      which originals even have coverage.
+  (b) Covered 112 tickers stop at 2024-12-31; data runs to 2026-05+, so
+      2025-2026 prices use frozen Dec-2024 cfacpr.
+  Either hole, on a splitting ticker, injects an Nx discontinuity into a
+  spread leg -> fake divergence -> corrupts cointegration / fires phantom z.
+  FIX: regenerate split_factors.parquet via fetch_split_factors.py with the
+  full 151-ticker universe, extended through present. MUST happen before the
+  expanded-universe cluster_discovery rerun is trustworthy.
+
+[BT-1 UPDATE 2026-06-17] Backtester WAS deleted (prior version produced
+  exaggerated results — correct to delete; false confidence is worse than
+  none). REBUILD against the specific inflation sources:
+   - lookahead: weights/params must use only past data at each decision
+     (cf. .shift(1) already used in meta-labeler; fix ML-5 full-series d-fit)
+   - in-sample fitting: set Z_THRESH/PT/SL via purged K-fold CV (AFML Ch 7,
+     already implemented in xgboost_trainer — reuse it)
+   - fills: costs >= realized slippage, not optimistic 7bps; the live bot's
+     realized slippage was far worse than signal
+   - split discontinuities: fix SPLIT-4 FIRST or fake Nx jumps inflate PnL
+   - validation metric: deflated Sharpe (Bailey & Lopez de Prado) to penalize
+     for number of configs tried
+  STANDARD: a backtester you can trust when it reports BAD numbers, not one
+  that reports good ones. Walk-forward, purged+embargoed CV, AFML Ch 11-13.
+
+[SPLIT-4 PLAN 2026-06-17] fetch_split_factors.py review:
+  - Already reads universe.txt (gets 151) and END_DATE=2026-12-31. Existing
+    parquet stops 2024-12-31 => either (1) not re-run since, or (2) CRSP dsf
+    coverage lags. Re-run reveals which.
+  - BUG: permno->ticker join can fan out duplicate (ticker,date) rows with
+    differing cfacpr; no dedup before save. split_adjustment reindex would
+    error/mis-pick on dupes. FIX: drop_duplicates(['ticker','date'],
+    keep='last') before to_parquet.
+  - 39 ETFs will return "no CRSP data" (CRSP dsf = stocks only). Correct for
+    non-splitting ETFs (raw passthrough). RESIDUAL GAP: splitting ETFs
+    (USO, UNG, leveraged/inverse) need non-CRSP split source — identify and
+    bound this set.

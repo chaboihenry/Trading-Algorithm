@@ -1,6 +1,7 @@
-# Research Node Dependencies (CPU-only)
+# Trading Algorithm Dependencies (CPU-only)
+# Covers both the research and execution nodes.
 
-# Brokerage (some research scripts touch Alpaca for clock/calendar)
+# Brokerage API (clock/calendar + live execution)
 alpaca-trade-api>=3.0.0
 
 # Data handling
@@ -8,7 +9,7 @@ pandas>=2.0.0
 numpy>=1.24.0
 pyarrow>=14.0.0
 
-# ML — CPU XGBoost; same as execution side
+# ML — CPU XGBoost (no CUDA)
 xgboost>=2.0.0
 scikit-learn>=1.3.0
 statsmodels>=0.14.0

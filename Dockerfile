@@ -10,9 +10,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends git \
     && rm -rf /var/lib/apt/lists/*
 
 # Install only execution node dependencies
-COPY requirements.execution.txt .
+COPY requirements.txt .
 RUN pip install --upgrade pip && \
-    pip install --no-cache-dir -r requirements.execution.txt
+    pip install --no-cache-dir -r requirements.txt
 
 # Copy the full repo (git pull needs the .git history)
 COPY . .

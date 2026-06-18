@@ -402,7 +402,7 @@ def run_full_rebuild(start_year: int = 2021):
         writers = {}
         for ticker in tickers_needed:
             ticker_dir = os.path.join(VAULT_ROOT, ticker, "parquet", "training_data")
-            # Retry per-ticker writer setup on SSD disconnect (Errno 19)
+            # Retry per-ticker writer setup on SSD disconnect (Errno 5=I/O error, 19=No such device)
             write_attempts = 0
             while write_attempts < 3:
                 try:
@@ -411,8 +411,8 @@ def run_full_rebuild(start_year: int = 2021):
                     writers[ticker] = pq.ParquetWriter(file_path, STRICT_SCHEMA, compression="zstd")
                     break  # Success, exit retry loop
                 except OSError as e:
-                    if e.errno == 19:  # No such device
-                        print(f'[ERROR] SSD disconnected during write for {ticker}, attempting remount...')
+                    if e.errno in (5, 19):  # 5=I/O error, 19=No such device — both SSD disconnect symptoms
+                        print(f'[ERROR] SSD write failed for {ticker} (Errno {e.errno}: 5=I/O error, 19=No such device), attempting remount...')
                         if not ensure_vault_accessible():
                             raise RuntimeError('Vault unrecoverable after remount attempts')
                         write_attempts += 1
