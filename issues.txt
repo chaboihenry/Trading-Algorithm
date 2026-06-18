@@ -464,3 +464,20 @@ MISSING COMPONENT — BACKTESTER
     non-splitting ETFs (raw passthrough). RESIDUAL GAP: splitting ETFs
     (USO, UNG, leveraged/inverse) need non-CRSP split source — identify and
     bound this set.
+
+[SPLIT-4 RESOLVED 2026-06-17] Split factors regenerated for 151-ticker
+  universe on SSD: 150 tickers covered (VXX absent — ETN, correct), 0 dupes,
+  all splits present incl. leveraged-ETF reverse splits. DATE WALL: CRSP dsf
+  coverage ends 2024-12-31 (vendor lag, unfixable our end). Checked all
+  split-prone names for 2025-2026 splits in the uncovered window: 3 confirmed
+  real splits (UVXY ~5.75x, SQQQ ~5.6x reverse; TQQQ ~2.25:1 fwd, all
+  2025-11-20) whose post-2024 adjustment would be wrong. MSTR/AMC flags were
+  volatility, not splits. RESOLUTION: removed UVXY/SQQQ/TQQQ from universe
+  (151->148) — leveraged/inverse vol products, not cointegration candidates,
+  and the only names with broken 2025-2026 adjustment. Residual note: VXX
+  remains (same class, raw passthrough, filters expected to reject).
+
+[SPLIT-5 RESOLVED 2026-06-17] fetch_split_factors.py hardcoded ~/quant_data
+  output path (bypassed QUANT_DATA_DIR) -> wrote fresh data to dead local
+  path while pipeline read stale SSD file. Fixed to use centralized
+  SPLIT_FACTORS_PATH. Same footgun class as ORCH-1/SH-2.
