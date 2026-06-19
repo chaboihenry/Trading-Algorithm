@@ -481,3 +481,23 @@ MISSING COMPONENT — BACKTESTER
   output path (bypassed QUANT_DATA_DIR) -> wrote fresh data to dead local
   path while pipeline read stale SSD file. Fixed to use centralized
   SPLIT_FACTORS_PATH. Same footgun class as ORCH-1/SH-2.
+
+--------------------------------------------------------------------------
+ARCHITECTURE NOTE — multi-frequency is possible, defer until justified
+--------------------------------------------------------------------------
+[ARCH-1] Frequency is separable per-basket, not a global constraint. The
+  order_router is already frequency-agnostic. Coupling lives only in
+  live_streamer (what bars), stat_arb_engine (*78 window/vol math), and
+  main_execution (eval cadence). Clean design: add a "frequency" field per
+  basket in curated_universe.json (set by cluster_discovery from half-life),
+  maintain separate daily + intraday matrices, eval each basket on its own
+  clock. The ENG-1 fix becomes *bars_per_day[freq] instead of *1.
+  DO NOT BUILD YET: only justified if BOTH a robust daily basket and a robust
+  intraday basket exist. Currently 0 daily, 1 candidate intraday (fixed-income
+  complex, pending rolling diagnostic). Over-engineering to trade one basket.
+
+[BT-1 DECISION 2026-06-18] Backtester frequency = HOURLY (matches 0.68d
+  half-life ~= 5 trading hours). Frequency is a parameter (default '1H') so
+  30min/1h/2h can be swept without a rewrite. Live system remains
+  multi-frequency per ARCH-1. First basket to test: 11-leg fixed-income
+  complex (100% rolling-window cointegrated, intraday half-life).
