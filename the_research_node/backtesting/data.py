@@ -33,6 +33,16 @@ WEIGHTS = {  # Johansen cointegrating vector from cluster_discovery
 }
 
 
+def _filter_rth(df: pd.DataFrame) -> pd.DataFrame:
+    # Keep only rows during US regular trading hours (9:30-16:00 ET).
+    # Convert UTC -> Eastern so DST is handled automatically.
+    et = df["timestamp"].dt.tz_convert("America/New_York")
+    mins = et.dt.hour * 60 + et.dt.minute
+    # 9:30 ET = 570 min, 16:00 ET = 960 min; also drop weekends
+    mask = (mins >= 570) & (mins <= 960) & (et.dt.dayofweek < 5)
+    return df[mask]
+
+
 def load_basket_bars(tickers: list, freq: str = "1h") -> pd.DataFrame:
     # Build one fully-aligned price panel: a leg missing any bar would
     # silently distort the spread, so we inner-join on common timestamps.
@@ -55,8 +65,14 @@ def load_basket_bars(tickers: list, freq: str = "1h") -> pd.DataFrame:
                 if not pd.api.types.is_datetime64_any_dtype(ts):
                     ts = pd.to_datetime(ts, utc=True)
                 df = df.assign(timestamp=ts)
+                # Live execution only trades RTH; restrict before resampling so
+                # the backtest never sees a bar it could not have traded.
+                df = _filter_rth(df)
                 # .last() = last trade in the bar, the tradable close for that interval
                 bars = df.set_index("timestamp")["price"].resample(freq).last()
+                # Resample spans the overnight gap and emits NaN bars for closed
+                # hours; drop them so we never manufacture an untradeable bar.
+                bars = bars.dropna()
                 bars = apply_split_adjustment(bars, ticker)
                 chunks.append(bars)
         if not chunks:
@@ -74,7 +90,7 @@ def load_basket_bars_cached(tickers: list, freq: str = "1h", rebuild: bool = Fal
     # The tick->hourly resample is the expensive step; persist its result so
     # only the first run pays for it and later runs are near-instant reads.
     cache_path = os.path.join(
-        os.path.dirname(VAULT_ROOT), "backtest_cache", f"basket_hourly_{freq}.parquet"
+        os.path.dirname(VAULT_ROOT), "backtest_cache", f"basket_hourly_{freq}_rth.parquet"
     )
     os.makedirs(os.path.dirname(cache_path), exist_ok=True)
 
@@ -97,7 +113,7 @@ def build_spread(prices: pd.DataFrame, weights: dict) -> pd.Series:
 if __name__ == "__main__":
     # Data-layer smoke test only — nothing is traded here.
     cache_path = os.path.join(
-        os.path.dirname(VAULT_ROOT), "backtest_cache", "basket_hourly_1h.parquet"
+        os.path.dirname(VAULT_ROOT), "backtest_cache", "basket_hourly_1h_rth.parquet"
     )
     print(f"Cache path: {cache_path}")
     # First run builds the cache; subsequent runs read it and stay fast.
@@ -105,6 +121,9 @@ if __name__ == "__main__":
     print(f"Loaded panel shape: {prices.shape}")
     if not prices.empty:
         print(f"Date range: {prices.index.min()} -> {prices.index.max()}")
+        # ~7 hourly RTH bars per session confirms the filter/resample is sane.
+        n_days = prices.index.normalize().nunique()
+        print(f"Avg bars per trading day: {len(prices) / n_days:.2f}")
 
     spread = build_spread(prices, WEIGHTS)
     print("\nSpread describe():")
