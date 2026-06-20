@@ -7,9 +7,9 @@ mean-reverts back through z_exit. This minimal variant has NO profit-target,
 stop-loss, or time-barrier (later variant) and NO transaction costs (Layer 4).
 PnL is accounted in SPREAD units only.
 
-CRITICAL — execution timing (no same-bar lookahead): a signal observed at the
+Execution timing (no same-bar lookahead): a signal observed at the
 CLOSE of bar t is acted on at bar t+1's spread. Both entries and exits fill at
-the NEXT bar, never the bar on which they were detected — same discipline as
+the next bar, never the bar on which they were detected — same discipline as
 the trailing windows in signals.py.
 """
 
@@ -19,7 +19,21 @@ import pandas as pd
 def simulate_positions(
     signals: pd.DataFrame,  # output of generate_signals: spread, zscore, raw_signal
     z_exit: float = 0.0,
+    half_life_days: float | None = None,  # required if time barrier used
+    freq: str = "1h",
+    time_hl_mult: float | None = None,  # None = no time barrier (minimal)
 ) -> pd.DataFrame:
+    # Optional time barrier. For a mean-reverting spread the only sound risk
+    # control is elapsed time, not adverse price: an adverse move strengthens
+    # the reversion thesis, so only failure-to-revert (too many bars held)
+    # signals a broken relationship. Derived from the basket's own half-life.
+    time_barrier_bars = None
+    if time_hl_mult is not None:
+        if half_life_days is None:
+            raise ValueError("half_life_days is required when time_hl_mult is set")
+        from the_research_node.backtesting.signals import BARS_PER_DAY
+        time_barrier_bars = max(int(time_hl_mult * half_life_days * BARS_PER_DAY[freq]), 1)
+
     # Work in positional space so "fill at t+1" is unambiguous; carry the
     # DatetimeIndex separately to stamp entry/exit times.
     index = signals.index
@@ -43,13 +57,21 @@ def simulate_positions(
                 entry_spread = spread[entry_idx]
             continue
 
-        # In a position: mean-crossing exit. A long was opened on a very
-        # negative z, so it unwinds once z climbs back to z_exit; a short is
-        # the mirror image. Detected at bar t, but filled at t+1.
-        exit_trigger = (position == 1 and zscore[t] >= z_exit) or (
+        # In a position, evaluate exits in PRIORITY ORDER (detected at bar t,
+        # filled at t+1 in every case):
+        #   1. time barrier — risk control, checked first. Usually an
+        #      unreverted, losing exit; that is correct and intended.
+        #   2. mean-cross — long unwinds once z climbs back to z_exit, short is
+        #      the mirror image.
+        exit_reason = None
+        if time_barrier_bars is not None and (t - entry_idx) >= time_barrier_bars:
+            exit_reason = "time_barrier"
+        elif (position == 1 and zscore[t] >= z_exit) or (
             position == -1 and zscore[t] <= z_exit
-        )
-        if exit_trigger and t + 1 < n:
+        ):
+            exit_reason = "mean_cross"
+
+        if exit_reason is not None and t + 1 < n:
             exit_idx = t + 1
             exit_spread = spread[exit_idx]
             trades.append(
@@ -62,7 +84,7 @@ def simulate_positions(
                     "entry_spread": entry_spread,
                     "exit_spread": exit_spread,
                     "bars_held": exit_idx - entry_idx,
-                    "exit_reason": "mean_cross",
+                    "exit_reason": exit_reason,
                     # No costs yet; long profits when spread rises, short when it falls.
                     "spread_pnl": position * (exit_spread - entry_spread),
                 }
@@ -108,24 +130,31 @@ if __name__ == "__main__":
     )
     from the_research_node.backtesting.signals import generate_signals
 
+    def _report(label: str, trades: pd.DataFrame) -> None:
+        print(f"\n{'=' * 60}\n  {label}\n{'=' * 60}")
+        print(f"Number of trades: {len(trades)}")
+        if trades.empty:
+            return
+        print("\nBy exit reason:")
+        print(trades["exit_reason"].value_counts().to_string())
+        print(f"\nBars held — mean: {trades['bars_held'].mean():.2f}, "
+              f"median: {trades['bars_held'].median():.1f}")
+        print(f"Total spread PnL: {trades['spread_pnl'].sum():.4f}")
+        # Split mean PnL by exit reason — shows mean_cross winners against the
+        # time_barrier (failure-to-revert) exits separately.
+        print("\nMean spread PnL by exit reason:")
+        print(trades.groupby("exit_reason")["spread_pnl"].mean().to_string())
+
     # Position-layer smoke test only — raw spread-PnL accounting, no costs.
     prices = load_basket_bars_cached(BASKET, "1h")
     spread = build_spread(prices, WEIGHTS)
     signals = generate_signals(spread, half_life_days=0.68)
-    trades = simulate_positions(signals)
 
-    print(f"Number of trades: {len(trades)}")
-    if not trades.empty:
-        print("\nBy direction:")
-        print(f"  +1 (long) : {int((trades['direction'] == 1).sum())}")
-        print(f"  -1 (short): {int((trades['direction'] == -1).sum())}")
+    # (a) minimal: mean-cross exit only
+    _report("MINIMAL (mean-cross exit only)", simulate_positions(signals))
 
-        print("\nBy exit reason:")
-        print(trades["exit_reason"].value_counts().to_string())
-
-        print(f"\nBars held — mean: {trades['bars_held'].mean():.2f}, "
-              f"median: {trades['bars_held'].median():.1f}")
-        print(f"Total spread PnL: {trades['spread_pnl'].sum():.4f}")
-
-        print("\nFirst 5 trades:")
-        print(trades.head(5).to_string(index=False))
+    # (b) with time barrier at 5x half-life
+    _report(
+        "WITH TIME BARRIER (time_hl_mult=5.0)",
+        simulate_positions(signals, half_life_days=0.68, freq="1h", time_hl_mult=5.0),
+    )
