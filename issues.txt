@@ -529,3 +529,9 @@ ARCHITECTURE NOTE — multi-frequency is possible, defer until justified
   (check_exits) falls back to canonical_ticker_set equivalence before
   basket_removed. Proven order-independent. Allocator/router/streamer need no
   change (consistent-by-construction iteration / pass-through labels).
+
+[PA-1 RESOLVED 2026-06-20] HRP return definition fixed: spread_val.diff() /
+  gross_notional (return on deployed capital) replaces pct_change on the signed
+  spread. pct_change explodes on zero-crossing baskets and is mis-scaled
+  otherwise. Verified correct scaling on fixed-income basket. Critical for the
+  swappable-brain goal (future many-basket strategies rely on correct HRP cov).
