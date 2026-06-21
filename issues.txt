@@ -501,3 +501,11 @@ ARCHITECTURE NOTE — multi-frequency is possible, defer until justified
   30min/1h/2h can be swept without a rewrite. Live system remains
   multi-frequency per ARCH-1. First basket to test: 11-leg fixed-income
   complex (100% rolling-window cointegrated, intraday half-life).
+
+[SH-1/2/3/4 RESOLVED 2026-06-20] Bash launchers fixed and tested.
+  SH-1: venv->uv run (script had never run successfully — venv/ never existed).
+  SH-2: require QUANT_DATA_DIR, FATAL exit if unset (portable, no silent fallback).
+  SH-3: removed set -e (was aborting before the restart loop).
+  SH-4: git pull made non-fatal. Verified: starts with env set, fails loudly without.
+  NOTE: orchestrator logs "EST" but uses system-local time (EDT in summer) —
+  cosmetic label only, sweep with ORCH cleanup.
