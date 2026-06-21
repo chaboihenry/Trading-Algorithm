@@ -160,31 +160,45 @@ def run_hrp_allocation():
         cov = cov.loc[sort_ix, sort_ix]
         hrp_weights = get_rec_bipart(cov, sort_ix)
 
-        for _ in range(50):
-            over_cap = hrp_weights[hrp_weights > HRP_MAX_CAP]
-            if not over_cap.empty:
-                excess = (over_cap - HRP_MAX_CAP).sum()
-                hrp_weights[hrp_weights > HRP_MAX_CAP] = HRP_MAX_CAP
-                under_cap_mask = hrp_weights < HRP_MAX_CAP
-                if under_cap_mask.sum() > 0:
-                    redistribution = hrp_weights[under_cap_mask] / hrp_weights[under_cap_mask].sum()
-                    hrp_weights[under_cap_mask] += excess * redistribution
+        # Feasibility guard: with N baskets, no valid weight vector exists if
+        # the floor overflows (N*floor > 1) or the cap can't reach 100%
+        # (N*cap < 1). In that case the redistribution loop can't converge and
+        # would silently emit constraint-violating weights — fall back to raw HRP.
+        n = len(hrp_weights)
+        cap_feasible = (n * HRP_MAX_CAP) >= 1.0
+        floor_feasible = (n * HRP_MIN_FLOOR) <= 1.0
+        if not (cap_feasible and floor_feasible):
+            print(f"[HRP] Cap/floor infeasible for {n} baskets "
+                  f"(cap {HRP_MAX_CAP} needs n>={1/HRP_MAX_CAP:.0f}, "
+                  f"floor {HRP_MIN_FLOOR} needs n<={1/HRP_MIN_FLOOR:.0f}); "
+                  f"using uncapped HRP weights.")
+            hrp_weights = hrp_weights / hrp_weights.sum()
+        else:
+            for _ in range(50):
+                over_cap = hrp_weights[hrp_weights > HRP_MAX_CAP]
+                if not over_cap.empty:
+                    excess = (over_cap - HRP_MAX_CAP).sum()
+                    hrp_weights[hrp_weights > HRP_MAX_CAP] = HRP_MAX_CAP
+                    under_cap_mask = hrp_weights < HRP_MAX_CAP
+                    if under_cap_mask.sum() > 0:
+                        redistribution = hrp_weights[under_cap_mask] / hrp_weights[under_cap_mask].sum()
+                        hrp_weights[under_cap_mask] += excess * redistribution
 
-            below_floor = hrp_weights[hrp_weights < HRP_MIN_FLOOR]
-            if not below_floor.empty:
-                deficit = (HRP_MIN_FLOOR - below_floor).sum()
-                hrp_weights[hrp_weights < HRP_MIN_FLOOR] = HRP_MIN_FLOOR
-                above_floor_mask = hrp_weights > HRP_MIN_FLOOR
-                if above_floor_mask.sum() > 0:
-                    above_floor_sum = hrp_weights[above_floor_mask].sum()
-                    hrp_weights[above_floor_mask] -= deficit * (hrp_weights[above_floor_mask] / above_floor_sum)
+                below_floor = hrp_weights[hrp_weights < HRP_MIN_FLOOR]
+                if not below_floor.empty:
+                    deficit = (HRP_MIN_FLOOR - below_floor).sum()
+                    hrp_weights[hrp_weights < HRP_MIN_FLOOR] = HRP_MIN_FLOOR
+                    above_floor_mask = hrp_weights > HRP_MIN_FLOOR
+                    if above_floor_mask.sum() > 0:
+                        above_floor_sum = hrp_weights[above_floor_mask].sum()
+                        hrp_weights[above_floor_mask] -= deficit * (hrp_weights[above_floor_mask] / above_floor_sum)
 
-            cap_ok = hrp_weights[hrp_weights > HRP_MAX_CAP].empty
-            floor_ok = hrp_weights[hrp_weights < HRP_MIN_FLOOR].empty
-            if cap_ok and floor_ok:
-                break
+                cap_ok = hrp_weights[hrp_weights > HRP_MAX_CAP].empty
+                floor_ok = hrp_weights[hrp_weights < HRP_MIN_FLOOR].empty
+                if cap_ok and floor_ok:
+                    break
 
-        hrp_weights = hrp_weights / hrp_weights.sum()
+            hrp_weights = hrp_weights / hrp_weights.sum()
         print(f"[HRP] Applied {HRP_MAX_CAP*100:.0f}% cap and {HRP_MIN_FLOOR*100:.0f}% floor.")
 
         # Inject allocations back into the JSON payload

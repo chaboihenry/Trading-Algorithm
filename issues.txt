@@ -535,3 +535,13 @@ ARCHITECTURE NOTE — multi-frequency is possible, defer until justified
   spread. pct_change explodes on zero-crossing baskets and is mis-scaled
   otherwise. Verified correct scaling on fixed-income basket. Critical for the
   swappable-brain goal (future many-basket strategies rely on correct HRP cov).
+
+[PA-3 RESOLVED 2026-06-20] Cap/floor feasibility guard added. Before enforcing,
+  checks N*cap>=1 and N*floor<=1; infeasible N falls back to uncapped-normalized
+  HRP with a warning instead of silently violating constraints. With cap=0.25/
+  floor=0.03 the feasible range is 4<=N<=33 (verified: N=2,3 and N=40 -> fallback;
+  N=4..33 -> enforce). Matters for future many-basket strategies.
+[PA-2 RESOLVED 2026-06-20] No code change needed. Existing <2-basket early return
+  and <2-column equal-weight fallback already handle the degenerate case correctly.
+  HRP meaningfully differs from equal-weight only at >=3-4 baskets — documented, not
+  a bug.
