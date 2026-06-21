@@ -545,3 +545,10 @@ ARCHITECTURE NOTE — multi-frequency is possible, defer until justified
   and <2-column equal-weight fallback already handle the degenerate case correctly.
   HRP meaningfully differs from equal-weight only at >=3-4 baskets — documented, not
   a bug.
+
+[CFG-4 RESOLVED 2026-06-20] Removed duplicate COOLDOWN_MINUTES (was defined 2x)
+  and literal COOLDOWN_BARS (kept derived COOLDOWN_MINUTES // 5). Values unchanged
+  (30 / 6); only removed confusing dead lines.
+[MEX-3 RESOLVED 2026-06-20] _force_eod_liquidation early-returns when no open
+  positions, so the "[EOD]" log no longer spams every 60s eval cycle after 15:50
+  with nothing to liquidate.
