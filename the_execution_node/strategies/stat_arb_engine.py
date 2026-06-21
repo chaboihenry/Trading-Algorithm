@@ -159,7 +159,7 @@ def check_exits(live_matrix: pd.DataFrame, open_positions: dict):
     for spread_name, pos_data in open_positions.items():
         params = curated_baskets.get(spread_name)
         if params is None:
-            exits[spread_name] = "basket_removed"
+            exits[spread_name] = {"reason": "basket_removed", "exit_z": None}
             continue
 
         weights = params.get('weights', {})
@@ -168,7 +168,7 @@ def check_exits(live_matrix: pd.DataFrame, open_positions: dict):
 
         missing = [t for t in weights if t not in live_matrix.columns]
         if missing:
-            exits[spread_name] = "missing_legs"
+            exits[spread_name] = {"reason": "missing_legs", "exit_z": None}
             continue
 
         spread_val = pd.Series(0.0, index=live_matrix.index)
@@ -183,36 +183,42 @@ def check_exits(live_matrix: pd.DataFrame, open_positions: dict):
         sl_thresh = pos_data.get('sl_threshold', 0.01)
         time_barrier = pos_data.get('time_barrier', TIME_BARRIER)
 
-        if entry_price == 0 or direction == 0:
-            exits[spread_name] = "invalid_position"
-            continue
-
-        trade_return = (current_price / entry_price - 1.0) * direction
-
-        if trade_return >= pt_thresh:
-            exits[spread_name] = "profit_take"
-            continue
-
-        if trade_return <= -sl_thresh:
-            exits[spread_name] = "stop_loss"
-            continue
-
-        if bars_held >= time_barrier:
-            exits[spread_name] = "time_expired"
-            continue
-
+        # Compute the fresh exit z ONCE up-front so every exit reason can log
+        # the real current z, not the stale entry snapshot. None when the
+        # window is insufficient or z is NaN.
+        current_z = None
         window = max(int(half_life * 78), 50)
         if len(spread_val) >= window:
             rolling_mean = spread_val.rolling(window).mean()
             rolling_std = spread_val.rolling(window).std().replace(0, np.nan)
             z_score = (spread_val - rolling_mean) / rolling_std
-            current_z = z_score.iloc[-1]
+            z_last = z_score.iloc[-1]
+            if not pd.isna(z_last):
+                current_z = float(z_last)
 
-            if not pd.isna(current_z):
-                if direction == 1 and current_z >= 0:
-                    exits[spread_name] = "mean_reversion"
-                elif direction == -1 and current_z <= 0:
-                    exits[spread_name] = "mean_reversion"
+        if entry_price == 0 or direction == 0:
+            exits[spread_name] = {"reason": "invalid_position", "exit_z": current_z}
+            continue
+
+        trade_return = (current_price / entry_price - 1.0) * direction
+
+        if trade_return >= pt_thresh:
+            exits[spread_name] = {"reason": "profit_take", "exit_z": current_z}
+            continue
+
+        if trade_return <= -sl_thresh:
+            exits[spread_name] = {"reason": "stop_loss", "exit_z": current_z}
+            continue
+
+        if bars_held >= time_barrier:
+            exits[spread_name] = {"reason": "time_expired", "exit_z": current_z}
+            continue
+
+        if current_z is not None:
+            if direction == 1 and current_z >= 0:
+                exits[spread_name] = {"reason": "mean_reversion", "exit_z": current_z}
+            elif direction == -1 and current_z <= 0:
+                exits[spread_name] = {"reason": "mean_reversion", "exit_z": current_z}
 
     return exits
 

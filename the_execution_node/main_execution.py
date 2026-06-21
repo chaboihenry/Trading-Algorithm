@@ -131,8 +131,14 @@ class ExecutionOrchestrator:
 
         exits = check_exits(matrix, self.open_positions)
 
-        for spread_name, reason in exits.items():
+        for spread_name, exit_info in exits.items():
+            reason = exit_info["reason"]
+            exit_z = exit_info.get("exit_z")
             pos_data = self.open_positions.get(spread_name, {})
+            # Stamp the fresh exit z so close_spread logs the REAL exit z, not the
+            # stale entry snapshot:
+            if exit_z is not None:
+                pos_data["current_z"] = exit_z
             weights = pos_data.get('johansen_weights', {})
 
             self.logger.info(f"[EXIT] {spread_name} | Reason: {reason}")
