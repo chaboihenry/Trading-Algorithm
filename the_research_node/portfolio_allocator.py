@@ -119,9 +119,14 @@ def run_hrp_allocation():
         basket_df = pd.DataFrame(prices).ffill().dropna()
         if basket_df.empty: continue
             
-        # Calculate the daily value of the spread
+        # Spread value is signed and mean-reverting (can cross zero), so pct_change
+        # is invalid. Use daily PnL (.diff) normalized by gross deployed notional
+        # (sum of absolute leg notionals) -> return on capital, comparable across
+        # baskets regardless of price scale. This is what HRP's covariance needs.
         spread_val = sum(basket_df[t] * weights[t] for t in tickers)
-        spread_returns[name] = spread_val.pct_change().dropna()
+        gross_notional = sum(basket_df[t].abs() * abs(weights[t]) for t in tickers)
+        spread_returns[name] = (spread_val.diff() / gross_notional).replace(
+            [float("inf"), float("-inf")], pd.NA).dropna()
 
     if len(spread_returns) < 2:
         print("[ERROR] Insufficient spread return data for HRP calculation.")
