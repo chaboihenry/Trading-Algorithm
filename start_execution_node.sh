@@ -1,10 +1,16 @@
 #!/bin/bash
-set -e
 
 echo "====== EXECUTION NODE STARTUP ======"
 echo "Time: $(date)"
 
-git pull origin main
+if [ -z "$QUANT_DATA_DIR" ]; then
+    echo "[FATAL] QUANT_DATA_DIR is not set. Export it before launching"
+    echo "        (e.g. export QUANT_DATA_DIR=/mnt/e/quant_data)."
+    exit 1
+fi
+echo "Vault: $QUANT_DATA_DIR"
+
+git pull origin main || echo "[WARN] git pull failed; using existing payload"
 
 if [ ! -f "the_models/curated_universe.json" ]; then
     echo "[CRITICAL] curated_universe.json missing. Cannot start."
@@ -19,7 +25,7 @@ fi
 echo "[SUCCESS] Payload verified."
 
 while true; do
-    python -m the_execution_node.main_execution
+    uv run python -m the_execution_node.main_execution
 
     echo "[CRASH] Daemon exited at $(date)"
     echo "[RECOVERY] Restarting in 30 seconds..."
