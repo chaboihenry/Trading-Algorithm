@@ -159,6 +159,14 @@ def check_exits(live_matrix: pd.DataFrame, open_positions: dict):
     for spread_name, pos_data in open_positions.items():
         params = curated_baskets.get(spread_name)
         if params is None:
+            # Fall back to canonical-set match (handles ticker-order differences
+            # between stored open-position keys and curated_universe keys)
+            target_set = canonical_ticker_set(spread_name)
+            for cand_name, cand_params in curated_baskets.items():
+                if canonical_ticker_set(cand_name) == target_set:
+                    params = cand_params
+                    break
+        if params is None:
             exits[spread_name] = {"reason": "basket_removed", "exit_z": None}
             continue
 

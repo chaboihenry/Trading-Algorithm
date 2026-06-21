@@ -12,6 +12,7 @@ import statsmodels.api as sm
 
 from the_utilities.paths import MODELS_DIR, CURATED_UNIVERSE_JSON, DISCOVERY_LEDGER_JSONL, VAULT_ROOT
 from the_utilities.split_adjustment import apply_split_adjustment
+from the_utilities.basket_naming import canonical_basket_key
 
 # Discovery frequency: DAILY (changed from 5-min on 2026-05-24)
 #
@@ -112,7 +113,7 @@ def load_vault_data(cluster_tickers: list, lookback_days: int = 365):
     # 365 calendar days ≈ 252 trading days = 1-year formation window per:
     #   - Avellaneda & Lee (2010): 252-day rolling PCA windows
     #   - Sarmento & Horta (2020): 1-year formation period
-    #   - Gatev/Goetzmann/Rouwenhorst (2006): 12-month formation period
+    #   - Gatev/Goetzmann/Rouwenhorst (2006): 12-month formation period 
     cutoff_dt = pd.Timestamp.now(tz='UTC') - pd.Timedelta(days=lookback_days)
     cutoff_str = cutoff_dt.strftime('%Y%m%d')
 
@@ -368,7 +369,7 @@ def run_discovery_pipeline():
             print(f"  >> [CONCENTRATION] {'_'.join(cluster_tickers)}: "
                   f"max notional weight = {ledger_entry['max_notional_concentration']:.1%}")
         else:
-            spread_name = "_".join(cluster_tickers) + "_Spread"
+            spread_name = canonical_basket_key(cluster_tickers)
             confirmed_baskets[spread_name] = {
                 'tickers': cluster_tickers,
                 'weights': weights,
