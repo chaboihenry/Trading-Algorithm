@@ -30,9 +30,6 @@ CUSUM_RECOVERY_DAYS = 3
 WARMUP_BARS = 2340
 BARS_PER_YEAR = 252 * 78
 
-COOLDOWN_MINUTES = 30
-COOLDOWN_BARS = 6  # COOLDOWN_MINUTES / 5min per bar — for backtester
-
 # Trading constraints
 NON_SHORTABLE_TICKERS = {'SO'}  # Tickers Alpaca doesn't allow shorting
 COOLDOWN_BARS = COOLDOWN_MINUTES // 5  # Derived: 30 minutes / 5min per bar = 6

@@ -106,7 +106,7 @@ class ExecutionOrchestrator:
     def _force_eod_liquidation(self):
         now = datetime.now()
         current_minutes = now.hour * 60 + now.minute
-        if current_minutes < EOD_LIQUIDATION_TIME_MINUTES:
+        if current_minutes < EOD_LIQUIDATION_TIME_MINUTES or not self.open_positions:
             return
 
         self.logger.info("[EOD] 15:50 ET — Force-liquidating all positions to avoid overnight risk.")
