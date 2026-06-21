@@ -516,3 +516,10 @@ ARCHITECTURE NOTE — multi-frequency is possible, defer until justified
   (frozen entry snapshot, never refreshed). Behavioral check deferred to paper test.
   Note: z still computed with *78 window (ENG-1, Tier 2) — plumbing fixed, window
   math pending.
+
+[ROUTER-1 RESOLVED 2026-06-20] Stale exit_z fixed. check_exits computes
+  current_z once up-front and returns {reason, exit_z} per spread; _process_exits
+  stamps it into pos_data before close_spread logs it. exit_z was always == entry_z
+  (frozen entry snapshot, never refreshed). Behavioral check deferred to paper test.
+  Note: z still computed with *78 window (ENG-1, Tier 2) — plumbing fixed, window
+  math pending.
