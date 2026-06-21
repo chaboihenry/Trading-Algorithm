@@ -552,3 +552,19 @@ ARCHITECTURE NOTE — multi-frequency is possible, defer until justified
 [MEX-3 RESOLVED 2026-06-20] _force_eod_liquidation early-returns when no open
   positions, so the "[EOD]" log no longer spams every 60s eval cycle after 15:50
   with nothing to liquidate.
+
+[ORCH-1 RESOLVED 2026-06-20] Env guard: orchestrator critical-exits if
+  QUANT_DATA_DIR unset (subprocesses inherit env; would else use dead vault).
+  Verified both ways (set -> Vault: logged + proceeds; unset -> CRITICAL + exit).
+[ORCH-2 RESOLVED 2026-06-20] _vault_accessible() guard before research + ML
+  pipelines (vault readers); daily-macro pipeline exempt (no vault read).
+[ORCH-3 RESOLVED 2026-06-20] git pull --rebase failure now runs git rebase
+  --abort before returning, so next scheduled run isn't wedged mid-rebase.
+[ORCH-4 RESOLVED 2026-06-20] run_step has timeout (default 4h, generous for
+  WRDS/ML) + TimeoutExpired handler, so a hung subprocess can't freeze the
+  scheduler.
+[ORCH-5 NO-CODE 2026-06-20] Basket-refresh cadence (Mon/Thu) vs strategy horizon
+  is a strategy-design judgment, not a bug — and moot with no tradeable basket.
+  Documented as a consideration for a future brain to tune; no code change.
+[ORCH cosmetic] "EST" labels -> "ET (system-local)" (schedule uses system local
+  time, which is EDT in summer).

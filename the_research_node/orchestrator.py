@@ -7,7 +7,7 @@ from datetime import datetime
 import schedule
 import sys
 
-from the_utilities.paths import LOGS_DIR, ORCHESTRATOR_LOG, MODELS_DIR, RAW_MACRO_CSV
+from the_utilities.paths import LOGS_DIR, ORCHESTRATOR_LOG, MODELS_DIR, RAW_MACRO_CSV, VAULT_ROOT
 
 os.makedirs(LOGS_DIR, exist_ok=True)
 
@@ -24,20 +24,29 @@ if not logger.handlers:
     logger.addHandler(fh)
 
 
-def run_step(name, command):
-    # Runs a subprocess and logs success or failure
+def run_step(name, command, timeout=14400):
+    # Runs a subprocess and logs success or failure. Default timeout is
+    # generous (4h) — WRDS collection / ML retrain legitimately take hours.
     logger.info(f"[{name}] Starting...")
     try:
         result = subprocess.run(
-            command, capture_output=True, text=True, check=True
+            command, capture_output=True, text=True, check=True, timeout=timeout
         )
         if result.stdout.strip():
             logger.info(f"[{name}] {result.stdout.strip()[-200:]}")
         logger.info(f"[{name}] Complete.")
         return True
+    except subprocess.TimeoutExpired:
+        logger.error(f"[{name}] TIMED OUT after {timeout}s")
+        return False
     except subprocess.CalledProcessError as e:
         logger.error(f"[{name}] FAILED: {e.stderr.strip()[-300:]}")
         return False
+
+
+def _vault_accessible() -> bool:
+    # Guard against a stale/unmounted SSD before any vault-reading run.
+    return os.path.isdir(VAULT_ROOT)
 
 def git_push():
     # Commits and pushes updated models/macro to GitHub for the EC2 to pull
@@ -74,6 +83,8 @@ def git_push():
         capture_output=True, text=True
     )
     if pull_result.returncode != 0:
+        # Un-wedge the repo so the next scheduled run doesn't start mid-rebase
+        subprocess.run(["git", "rebase", "--abort"], capture_output=True, text=True)
         logger.warning(f"[GIT PUSH] Pull-rebase failed: {pull_result.stderr.strip()[-200:]}")
         return
 
@@ -102,6 +113,9 @@ def run_daily_pipeline():
 def run_research_pipeline():
     # Medium — refreshes clusters and allocations (~30-45 min)
     logger.info(f"====== RESEARCH REFRESH | {datetime.now().strftime('%Y-%m-%d %H:%M')} ======")
+    if not _vault_accessible():
+        logger.error("Vault not accessible (mount may be stale). Skipping run.")
+        return
     start = time.time()
 
     run_step("MACRO UPDATE",
@@ -125,6 +139,9 @@ def run_research_pipeline():
 def run_weekly_ml_pipeline():
     # Heavy — full retrain + backtest matrix (~1-3 hours)
     logger.info(f"====== WEEKLY ML PIPELINE | {datetime.now().strftime('%Y-%m-%d %H:%M')} ======")
+    if not _vault_accessible():
+        logger.error("Vault not accessible (mount may be stale). Skipping run.")
+        return
     start = time.time()
 
     run_step("MACRO UPDATE",
@@ -157,6 +174,14 @@ if __name__ == "__main__":
     logger.info("====== M1 RESEARCH NODE ORCHESTRATOR ======")
     logger.info(f"Current time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
+    # Subprocesses inherit this env; a missing vault path would silently route
+    # them to a dead default. Fail loud instead.
+    if not os.environ.get("QUANT_DATA_DIR"):
+        logger.critical("QUANT_DATA_DIR is not set — research subprocesses would "
+                        "use the wrong vault path. Export it and relaunch.")
+        sys.exit(1)
+    logger.info(f"Vault: {os.environ['QUANT_DATA_DIR']}")
+
     # Monday and Thursday: cluster + HRP refresh
     schedule.every().monday.at("16:30").do(run_research_pipeline)
     schedule.every().thursday.at("16:30").do(run_research_pipeline)
@@ -174,9 +199,9 @@ if __name__ == "__main__":
         lambda: logger.info(f"[HEARTBEAT] Orchestrator alive at {datetime.now()}")
     )
 
-    logger.info("Scheduled: Research refresh Mon/Thu @ 16:30 EST")
-    logger.info("Scheduled: Macro update Tue/Wed/Fri @ 16:30 EST")
-    logger.info("Scheduled: Weekly ML pipeline Sat @ 02:00 EST")
+    logger.info("Scheduled: Research refresh Mon/Thu @ 16:30 ET (system-local)")
+    logger.info("Scheduled: Macro update Tue/Wed/Fri @ 16:30 ET (system-local)")
+    logger.info("Scheduled: Weekly ML pipeline Sat @ 02:00 ET (system-local)")
 
     # Auto-trigger if launched after market close on a weekday
     now = datetime.now()
