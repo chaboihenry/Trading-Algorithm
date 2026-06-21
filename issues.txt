@@ -523,3 +523,9 @@ ARCHITECTURE NOTE — multi-frequency is possible, defer until justified
   (frozen entry snapshot, never refreshed). Behavioral check deferred to paper test.
   Note: z still computed with *78 window (ENG-1, Tier 2) — plumbing fixed, window
   math pending.
+
+[NAME-1 RESOLVED 2026-06-20] Canonical basket identity wired in. Write side
+  (cluster_discovery) now uses canonical_basket_key (sorted); read side
+  (check_exits) falls back to canonical_ticker_set equivalence before
+  basket_removed. Proven order-independent. Allocator/router/streamer need no
+  change (consistent-by-construction iteration / pass-through labels).
