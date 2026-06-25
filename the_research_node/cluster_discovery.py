@@ -389,34 +389,7 @@ def run_discovery_pipeline():
 
     os.makedirs(MODELS_DIR, exist_ok=True)
 
-    # Master ledger preserves historical baskets across runs
-    ledger_path = os.path.join(MODELS_DIR, 'universe_baskets.json')
-    ledger_payload = {"historical_basket_names": [], "baskets": {}}
-
-    if os.path.exists(ledger_path):
-        try:
-            with open(ledger_path, 'r') as f:
-                existing_data = json.load(f)
-                if "historical_basket_names" in existing_data and "baskets" in existing_data:
-                    ledger_payload = existing_data
-                else:
-                    ledger_payload["baskets"] = existing_data
-        except Exception as e:
-            print(f"[WARNING] Could not read existing ledger. Starting fresh. Error: {e}")
-
     current_time = pd.Timestamp.now(tz='UTC').isoformat()
-    for basket_name, basket_data in confirmed_baskets.items():
-        basket_data['last_seen'] = current_time
-        ledger_payload["baskets"][basket_name] = basket_data
-
-    ledger_payload["historical_basket_names"] = list(ledger_payload["baskets"].keys())
-
-    temp_ledger_path = os.path.join(MODELS_DIR, 'universe_baskets_temp.json')
-    with open(temp_ledger_path, 'w') as f:
-        json.dump(ledger_payload, f, indent=4)
-    os.replace(temp_ledger_path, ledger_path)
-
-    print(f"[SYSTEM] Master Ledger updated. Tracking {len(ledger_payload['historical_basket_names'])} historical baskets.")
 
     confirmed_baskets = enforce_websocket_limit(confirmed_baskets, max_tickers=30)
 

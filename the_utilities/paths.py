@@ -10,12 +10,12 @@ VAULT_ROOT = os.path.join(QUANT_DATA_DIR, "tick_data_storage")
 SPLIT_FACTORS_PATH = os.path.join(QUANT_DATA_DIR, "split_factors.parquet")
 
 LOGS_DIR = "logs"
-MODELS_DIR = "the_models"
+MODELS_DIR = "the_models/cointegration"
 EXECUTION_DATA_DIR = "the_execution_node/data"
 RAW_MACRO_CSV = f"{EXECUTION_DATA_DIR}/raw_macro_data.csv"
 TRADE_HISTORY_CSV = f"{EXECUTION_DATA_DIR}/trade_history.csv"
 CURATED_UNIVERSE_JSON = f"{MODELS_DIR}/curated_universe.json"
-META_LABELER_JSON = f"{MODELS_DIR}/meta_labeler_v3.json"
+META_LABELER_JSON = f"{MODELS_DIR}/meta_labeler.json"
 ACTIVE_MODEL_VERSION = f"{MODELS_DIR}/active_model_version.txt"
 OPEN_POSITIONS_JSON = f"{LOGS_DIR}/open_positions.json"
 DISCOVERY_LEDGER_JSONL = f"{LOGS_DIR}/cluster_discovery_ledger.jsonl"
