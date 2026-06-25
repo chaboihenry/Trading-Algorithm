@@ -25,7 +25,7 @@ import matplotlib
 matplotlib.use("Agg")  # Headless: save to PNG, no display
 import matplotlib.pyplot as plt
 
-from the_research_node.cluster_discovery import load_vault_data
+from the_research_node.brains.cointegration.discovery import load_vault_data
 from the_utilities.paths import LOGS_DIR
 
 
