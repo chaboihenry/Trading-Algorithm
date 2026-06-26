@@ -30,6 +30,11 @@ class TradeIntent:
     target_weight: float | None = None    # signed desired weight; required for OPEN, ignored for CLOSE
     stop_level: float | None = None        # absolute price stop; chassis exits if breached (strategy-agnostic)
     horizon_bars: int | None = None        # optional time stop; chassis exits after N bars
+    group: str | None = None   # identifier of the independent bet this intent
+                               # belongs to (e.g. a basket key). HRP distributes
+                               # capital ACROSS distinct groups. A multi-leg basket
+                               # tags all its legs with one shared group; a
+                               # standalone position can use its own asset as group.
     metadata: dict = field(default_factory=dict)  # brain-specific extras (e.g. confidence, source); chassis logs only
 
 
