@@ -30,6 +30,7 @@ Detail/rationale for each fix lives in the git commit that resolved it.
 [DATA-1] MED   OPEN   wrds collector — backfill GOOGL/CMCSA pre-mapping zero-row months
 [SPLIT-2] LOW  OPEN   split_adjustment.py — aligned.loc[ts_dates] fragile/slow; use map/merge_asof
 [INTF-1] HIGH  OPEN   NEW: define brain↔chassis interface (strategy produces target weights + meta)
+[BT-2]   HIGH  OPEN   backtesting/engine.py — generic intent-driven engine; dollar-based, simulates any Strategy's TradeIntents (validate vs known 0.30-bps cointegration break-even)
 
 --------------------------------------------------------------------------
 ## RESOLVED
@@ -67,3 +68,4 @@ Detail/rationale for each fix lives in the git commit that resolved it.
 [ORCH-5] —    NOTE   basket-refresh cadence vs horizon is strategy judgment; tune per future brain
 [DIAG-1] —    NOTE   diagnostic_baskets uses correct per-freq half-life; engine (*78) does not (see ENG-1)
 ==========================================================================
+
