@@ -114,7 +114,7 @@ them and trades a paper account on Alpaca.
 
 - **Research pipeline + honest backtester:** complete. The negative finding
   above is the result.
-- **Execution chassis correctness:** complete (see `issues.txt` RESOLVED).
+- **Execution chassis correctness:** complete
 - **Modular brain-chassis refactor (in progress):** the `Strategy` interface and
   the generic dollar-based engine are built; the engine's mechanics (next-bar
   fills, PnL, costs, equity curve) are validated on a buy-and-hold case against
